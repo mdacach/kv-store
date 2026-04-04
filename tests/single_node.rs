@@ -8,7 +8,7 @@ use proptest::property_test;
 
 use kv_store::node::Operation;
 use kv_store::simulator::Simulator;
-use kv_store::{ClientID, Key, Node, NodeID, Server, Value};
+use kv_store::{CheckResult, ClientID, Key, Node, NodeID, Server, Value};
 
 /// Generate a random key-value operation.
 ///
@@ -78,6 +78,12 @@ fn all_operations_complete_single_client(
     for entry in history.entries() {
         prop_assert!(entry.invoke_time <= entry.return_time);
     }
+
+    prop_assert_eq!(
+        sim.check_linearizable(),
+        CheckResult::Ok,
+        "single-node history must be linearizable",
+    );
     Ok(())
 }
 
@@ -108,6 +114,12 @@ fn all_operations_complete_multiple_clients(
     for entry in history.entries() {
         prop_assert!(entry.invoke_time <= entry.return_time);
     }
+
+    prop_assert_eq!(
+        sim.check_linearizable(),
+        CheckResult::Ok,
+        "single-node history must be linearizable",
+    );
     Ok(())
 }
 
@@ -156,4 +168,5 @@ fn example_trace() {
     for entry in history.entries() {
         assert!(entry.invoke_time <= entry.return_time);
     }
+    assert_eq!(sim.check_linearizable(), CheckResult::Ok);
 }

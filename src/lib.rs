@@ -1,3 +1,4 @@
+pub mod checker;
 pub mod history;
 pub mod node;
 pub mod server;
@@ -5,6 +6,7 @@ pub mod simulator;
 
 use std::fmt;
 
+pub use checker::{check_linearizable, CheckResult};
 pub use history::{History, HistoryEntry};
 pub use node::{Key, Node, Operation, OperationResult, Value};
 pub use server::Server;

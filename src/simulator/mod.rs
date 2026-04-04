@@ -16,6 +16,7 @@ use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
+use crate::checker::{self, CheckResult};
 use crate::history::History;
 use crate::node::Operation;
 use crate::server::Server;
@@ -273,8 +274,18 @@ impl Simulator {
         &self.history
     }
 
+    /// Check whether the recorded history is linearizable.
+    pub fn check_linearizable(&self) -> CheckResult {
+        checker::check_linearizable(self.history.entries())
+    }
+
     pub fn log(&self) -> &[LogEntry] {
         &self.action_log
+    }
+
+    /// Returns the IDs of all registered clients, in sorted order.
+    pub fn client_ids(&self) -> Vec<ClientID> {
+        self.clients.keys().copied().collect()
     }
 
     pub fn format_log(&self) -> String {
