@@ -77,7 +77,7 @@ pub struct Message {
 /// A protocol actor driven by the simulator.
 pub trait StateMachine {
     /// Handle an inbound message and return any messages to send in response.
-    fn on_message(&mut self, msg: &Message, at_time: u64) -> Vec<Message>;
+    fn on_message(&mut self, message: &Message, at_time: u64) -> Vec<Message>;
 
     /// Simulate passage of time. May produce spontaneous messages, such as new requests or heartbeats.
     fn tick(&mut self, _at_time: u64) -> Vec<Message> {

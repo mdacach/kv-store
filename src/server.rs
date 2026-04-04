@@ -16,7 +16,7 @@ impl Server {
 }
 
 impl StateMachine for Server {
-    fn on_message(&mut self, msg: &Message, at_time: u64) -> Vec<Message> {
-        self.node.on_message(msg, at_time)
+    fn on_message(&mut self, message: &Message, at_time: u64) -> Vec<Message> {
+        self.node.on_message(message, at_time)
     }
 }
