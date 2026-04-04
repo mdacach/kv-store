@@ -59,6 +59,7 @@ fn all_operations_complete_single_client(
     #[strategy = 0..=10u64] max_delivery_delay: u64,
     #[strategy = generate_operations(30)] operations: Vec<Operation>,
 ) -> Result<(), TestCaseError> {
+    let num_ops = operations.len();
     let server = Server::new(Node::new(NodeID(0)));
     let mut sim = Simulator::new(server, seed, 0..max_delivery_delay);
     sim.register_client(ClientID(0), operations);
@@ -70,6 +71,13 @@ fn all_operations_complete_single_client(
         "Client should have completed all ops.\nLog:\n{}",
         sim.format_log(),
     );
+
+    let history = sim.history();
+    prop_assert!(history.all_returned(), "all operations should have returned");
+    prop_assert_eq!(history.entries().len(), num_ops);
+    for entry in history.entries() {
+        prop_assert!(entry.invoke_time <= entry.return_time);
+    }
     Ok(())
 }
 
@@ -79,6 +87,7 @@ fn all_operations_complete_multiple_clients(
     #[strategy = 0..=10u64] max_delivery_delay: u64,
     #[strategy = generate_client_workloads(5, 20)] workloads: Vec<Vec<Operation>>,
 ) -> Result<(), TestCaseError> {
+    let total_ops: usize = workloads.iter().map(|w| w.len()).sum();
     let server = Server::new(Node::new(NodeID(0)));
     let mut sim = Simulator::new(server, seed, 0..max_delivery_delay);
     for (i, ops) in workloads.into_iter().enumerate() {
@@ -92,6 +101,13 @@ fn all_operations_complete_multiple_clients(
         "All clients should have completed all ops.\nLog:\n{}",
         sim.format_log(),
     );
+
+    let history = sim.history();
+    prop_assert!(history.all_returned(), "all operations should have returned");
+    prop_assert_eq!(history.entries().len(), total_ops);
+    for entry in history.entries() {
+        prop_assert!(entry.invoke_time <= entry.return_time);
+    }
     Ok(())
 }
 
@@ -133,4 +149,11 @@ fn example_trace() {
 
     println!("{}", sim.format_log());
     assert!(sim.all_clients_done());
+
+    let history = sim.history();
+    assert!(history.all_returned());
+    assert_eq!(history.entries().len(), 5);
+    for entry in history.entries() {
+        assert!(entry.invoke_time <= entry.return_time);
+    }
 }

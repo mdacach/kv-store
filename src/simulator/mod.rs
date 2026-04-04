@@ -16,6 +16,7 @@ use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
+use crate::history::History;
 use crate::node::Operation;
 use crate::server::Server;
 use crate::{ActorId, ClientID, Message, MessagePayload, OperationID, StateMachine};
@@ -82,6 +83,8 @@ pub struct Simulator {
     delivery_delay: Range<u64>,
     /// Append-only log of all events for debugging and visualization.
     action_log: Vec<LogEntry>,
+    /// History of client operations for linearizability checking.
+    history: History,
 }
 
 impl Simulator {
@@ -94,6 +97,7 @@ impl Simulator {
             rng: ChaCha8Rng::seed_from_u64(seed),
             delivery_delay,
             action_log: Vec::new(),
+            history: History::new(),
         }
     }
 
@@ -161,6 +165,12 @@ impl Simulator {
         let Some((operation_id, operation)) = client.try_next_operation() else {
             return vec![];
         };
+        self.history.record_invoke(
+            client_id,
+            operation_id,
+            operation.clone(),
+            self.clock,
+        );
         vec![Message {
             from: ActorId::Client(client_id),
             to: ActorId::Server,
@@ -183,7 +193,7 @@ impl Simulator {
     ) -> Vec<Message> {
         let MessagePayload::ClientResponse {
             operation_id: op_id,
-            ..
+            result,
         } = &message.payload
         else {
             panic!(
@@ -191,6 +201,8 @@ impl Simulator {
                 message.payload
             );
         };
+        self.history
+            .record_return(client_id, *op_id, result.clone(), self.clock);
         let client = self
             .clients
             .get_mut(&client_id)
@@ -255,6 +267,10 @@ impl Simulator {
 
     pub fn clock(&self) -> u64 {
         self.clock
+    }
+
+    pub fn history(&self) -> &History {
+        &self.history
     }
 
     pub fn log(&self) -> &[LogEntry] {
