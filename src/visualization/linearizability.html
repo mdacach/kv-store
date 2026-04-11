@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Linearizability Check</title>
+<style>
+body { font-family: system-ui, sans-serif; margin: 20px; background: #fafafa; }
+svg { background: white; border: 1px solid #ddd; border-radius: 4px; }
+.op-rect { cursor: pointer; }
+.op-rect:hover { filter: brightness(0.9); }
+.op-label { font-size: 11px; pointer-events: none; }
+.lane-label { font-size: 13px; font-weight: 600; fill: #333; }
+.time-label { font-size: 10px; fill: #999; }
+.time-line { stroke: #eee; stroke-width: 1; }
+.lp-line { stroke-width: 1.5; }
+.lp-valid { fill: #2563eb; stroke: #2563eb; }
+.lp-invalid { fill: #dc2626; stroke: #dc2626; }
+.legend { margin-top: 12px; font-size: 13px; color: #555; }
+.legend span { display: inline-block; margin-right: 16px; }
+.legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: middle; margin-right: 4px; }
+#tooltip { position: fixed; background: #1e293b; color: #f1f5f9; padding: 8px 12px;
+  border-radius: 6px; font-size: 12px; pointer-events: none; display: none;
+  max-width: 350px; line-height: 1.5; white-space: pre-line; z-index: 10; }
+</style>
+</head>
+<body>
+<div id="tooltip"></div>
+__SVG__
+__LEGEND__
+__SUMMARY__
+<script>
+__SCRIPT__
+</script>
+</body>
+</html>

@@ -1,8 +1,8 @@
-//! Generate an interactive HTML trace visualization.
+//! Generate an interactive HTML message trace visualization.
 //!
 //! Usage:
-//!   cargo run --example visualize
-//!   open target/trace.html
+//!   cargo run --example message_trace
+//!   open target/message_trace.html
 
 #[path = "scenarios/mod.rs"]
 mod scenarios;
@@ -21,7 +21,7 @@ fn main() {
     let html = trace::render(&scenarios);
 
     std::fs::create_dir_all("target").ok();
-    let path = std::path::Path::new("target/trace.html");
+    let path = std::path::Path::new("target/message_trace.html");
     std::fs::write(path, &html).expect("Failed to write HTML");
 
     let abs = std::fs::canonicalize(path).unwrap();
