@@ -45,9 +45,28 @@ impl Operation {
     }
 }
 
+impl fmt::Display for Operation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Operation::Put { key, value } => write!(f, "Put({key}, \"{value}\")"),
+            Operation::Get { key } => write!(f, "Get({key})"),
+            Operation::Delete { key } => write!(f, "Delete({key})"),
+        }
+    }
+}
+
 /// The result of an operation.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct OperationResult(pub Option<Value>);
+
+impl fmt::Display for OperationResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.0 {
+            Some(v) => write!(f, "Some(\"{v}\")"),
+            None => write!(f, "None"),
+        }
+    }
+}
 
 /// A single database node backed by an in-memory `BTreeMap`.
 #[derive(Debug, Clone)]

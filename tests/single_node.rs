@@ -8,7 +8,7 @@ use proptest::property_test;
 
 use kv_store::node::Operation;
 use kv_store::simulator::Simulator;
-use kv_store::{CheckResult, ClientID, Key, Node, NodeID, Server, Value};
+use kv_store::{ClientID, Key, Node, NodeID, Server, Value};
 
 /// Generate a random key-value operation.
 ///
@@ -73,15 +73,17 @@ fn all_operations_complete_single_client(
     );
 
     let history = sim.history();
-    prop_assert!(history.all_returned(), "all operations should have returned");
+    prop_assert!(
+        history.all_returned(),
+        "all operations should have returned"
+    );
     prop_assert_eq!(history.entries().len(), num_ops);
     for entry in history.entries() {
         prop_assert!(entry.invoke_time <= entry.return_time);
     }
 
-    prop_assert_eq!(
-        sim.check_linearizable(),
-        CheckResult::Ok,
+    prop_assert!(
+        sim.check_linearizable().is_ok(),
         "single-node history must be linearizable",
     );
     Ok(())
@@ -109,15 +111,17 @@ fn all_operations_complete_multiple_clients(
     );
 
     let history = sim.history();
-    prop_assert!(history.all_returned(), "all operations should have returned");
+    prop_assert!(
+        history.all_returned(),
+        "all operations should have returned"
+    );
     prop_assert_eq!(history.entries().len(), total_ops);
     for entry in history.entries() {
         prop_assert!(entry.invoke_time <= entry.return_time);
     }
 
-    prop_assert_eq!(
-        sim.check_linearizable(),
-        CheckResult::Ok,
+    prop_assert!(
+        sim.check_linearizable().is_ok(),
         "single-node history must be linearizable",
     );
     Ok(())
@@ -168,5 +172,37 @@ fn example_trace() {
     for entry in history.entries() {
         assert!(entry.invoke_time <= entry.return_time);
     }
-    assert_eq!(sim.check_linearizable(), CheckResult::Ok);
+    let result = sim.check_linearizable();
+    println!("\n{result}");
+    assert!(result.is_ok());
+}
+
+/// Hand-crafted non-linearizable history: the checker must reject it.
+#[test]
+fn violation_detected() {
+    use kv_store::{HistoryEntry, OperationResult};
+
+    let history = vec![
+        HistoryEntry {
+            client_id: ClientID(0),
+            operation: Operation::Put {
+                key: Key("x".into()),
+                value: Value("1".into()),
+            },
+            invoke_time: 0,
+            return_time: 1,
+            result: OperationResult(None),
+        },
+        HistoryEntry {
+            client_id: ClientID(0),
+            operation: Operation::Get {
+                key: Key("x".into()),
+            },
+            invoke_time: 2,
+            return_time: 3,
+            result: OperationResult(None), // stale read
+        },
+    ];
+    let result = kv_store::check_linearizable(&history);
+    assert!(result.is_violation());
 }

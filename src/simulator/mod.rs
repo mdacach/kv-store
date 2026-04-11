@@ -16,8 +16,8 @@ use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
-use crate::checker::{self, CheckResult};
 use crate::history::History;
+use crate::linearizability_checker::{self, CheckResult};
 use crate::node::Operation;
 use crate::server::Server;
 use crate::{ActorId, ClientID, Message, MessagePayload, OperationID, StateMachine};
@@ -166,12 +166,8 @@ impl Simulator {
         let Some((operation_id, operation)) = client.try_next_operation() else {
             return vec![];
         };
-        self.history.record_invoke(
-            client_id,
-            operation_id,
-            operation.clone(),
-            self.clock,
-        );
+        self.history
+            .record_invoke(client_id, operation_id, operation.clone(), self.clock);
         vec![Message {
             from: ActorId::Client(client_id),
             to: ActorId::Server,
@@ -276,7 +272,7 @@ impl Simulator {
 
     /// Check whether the recorded history is linearizable.
     pub fn check_linearizable(&self) -> CheckResult {
-        checker::check_linearizable(self.history.entries())
+        linearizability_checker::check_linearizable(self.history.entries())
     }
 
     pub fn log(&self) -> &[LogEntry] {

@@ -1,13 +1,14 @@
-pub mod checker;
 pub mod history;
+pub mod linearizability_checker;
 pub mod node;
 pub mod server;
 pub mod simulator;
+pub mod visualization;
 
 use std::fmt;
 
-pub use checker::{check_linearizable, CheckResult};
 pub use history::{History, HistoryEntry};
+pub use linearizability_checker::{CheckResult, check_linearizable};
 pub use node::{Key, Node, Operation, OperationResult, Value};
 pub use server::Server;
 
