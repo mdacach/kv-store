@@ -2,7 +2,7 @@
 //!
 //! Receives `ClientRequest` messages and routes them to the appropriate node.
 
-use crate::node::Node;
+use crate::runtime::node::Node;
 use crate::{Message, StateMachine};
 
 pub struct Server {

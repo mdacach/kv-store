@@ -6,7 +6,7 @@
 use proptest::prelude::*;
 use proptest::property_test;
 
-use kv_store::node::Operation;
+use kv_store::Operation;
 use kv_store::simulator::Simulator;
 use kv_store::{ClientID, Key, Node, NodeID, Server, Value};
 
