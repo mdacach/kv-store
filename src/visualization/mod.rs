@@ -1,6 +1,6 @@
 //! Visualization modules for the KV store simulation.
 //!
-//! - [`linearizability`] — swim-lane diagram showing operations as time intervals
+//! - [`linearizability`] — swim-lane diagram showing requests as time intervals
 //!   with linearization point markers and reference state transitions.
 //!   Answers: "is this history linearizable, and if not, where does it break?"
 //!

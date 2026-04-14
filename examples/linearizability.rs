@@ -4,28 +4,49 @@
 //!   cargo run --example linearizability
 //!   open target/linearizability.html
 
-#[path = "scenarios/mod.rs"]
-mod scenarios;
-
 use kv_store::visualization::linearizability;
+use kv_store::{ClientID, HistoryEntry, Key, Request, Response, Value};
 
 fn main() {
-    let all = scenarios::all();
-    let scenario = all
-        .iter()
-        .find(|s| s.name.starts_with("Two clients"))
-        .expect("expected the 'Two clients' scenario");
-
-    let entries = scenario.sim.history().entries();
-    let result = kv_store::check_linearizable(entries);
-    let html = linearizability::visualize(entries, &result);
+    let entries = vec![
+        HistoryEntry {
+            client_id: ClientID(0),
+            request: Request::Put {
+                key: Key("x".into()),
+                value: Value("1".into()),
+            },
+            invoke_time: 0,
+            return_time: 1,
+            response: Response(None),
+        },
+        HistoryEntry {
+            client_id: ClientID(1),
+            request: Request::Get {
+                key: Key("y".into()),
+            },
+            invoke_time: 0,
+            return_time: 2,
+            response: Response(None),
+        },
+        HistoryEntry {
+            client_id: ClientID(1),
+            request: Request::Get {
+                key: Key("x".into()),
+            },
+            invoke_time: 2,
+            return_time: 3,
+            response: Response(None),
+        },
+    ];
+    let result = kv_store::check_linearizable(&entries);
+    let html = linearizability::visualize(&entries, &result);
 
     std::fs::create_dir_all("target").ok();
     let path = std::path::Path::new("target/linearizability.html");
     std::fs::write(path, &html).expect("Failed to write HTML");
 
     let abs = std::fs::canonicalize(path).unwrap();
-    eprintln!("{}\n{result}", scenario.name);
+    eprintln!("Hand-crafted stale-read violation\n{result}");
     eprintln!("Written to {}", abs.display());
 
     #[cfg(target_os = "macos")]

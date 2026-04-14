@@ -1,28 +1,28 @@
 //! Seeded regression tests for notable phase-2 behaviors.
 
 use kv_store::simulator::Simulator;
-use kv_store::{ClientID, Key, Operation, Value};
+use kv_store::{ClientID, Key, Request, Value};
 
 #[test]
 fn simulator_is_deterministic_for_fixed_seed() {
     let workload_0 = vec![
-        Operation::Put {
+        Request::Put {
             key: Key("x".into()),
             value: Value("1".into()),
         },
-        Operation::Get {
+        Request::Get {
             key: Key("x".into()),
         },
-        Operation::Delete {
+        Request::Delete {
             key: Key("x".into()),
         },
     ];
     let workload_1 = vec![
-        Operation::Put {
+        Request::Put {
             key: Key("y".into()),
             value: Value("2".into()),
         },
-        Operation::Get {
+        Request::Get {
             key: Key("x".into()),
         },
     ];
@@ -41,7 +41,7 @@ fn simulator_is_deterministic_for_fixed_seed() {
 
     assert_eq!(left.clock(), right.clock());
     assert_eq!(left.format_log(), right.format_log());
-    assert_eq!(left.history().entries(), right.history().entries());
+    assert_eq!(left.request_history().entries(), right.request_history().entries());
     assert_eq!(left.check_linearizable(), right.check_linearizable());
 }
 
@@ -51,11 +51,11 @@ fn client_can_miss_its_own_write_due_to_rerouting() {
     sim.register_client(
         ClientID(0),
         vec![
-            Operation::Put {
+            Request::Put {
                 key: Key("x".into()),
                 value: Value("1".into()),
             },
-            Operation::Get {
+            Request::Get {
                 key: Key("x".into()),
             },
         ],
@@ -63,14 +63,14 @@ fn client_can_miss_its_own_write_due_to_rerouting() {
     sim.schedule_tick_all(0);
     sim.run();
 
-    let entries = sim.history().entries();
+    let entries = sim.request_history().entries();
     assert_eq!(entries.len(), 2, "{}", sim.format_log());
-    assert_eq!(entries[0].result.0, None);
-    assert_eq!(entries[1].result.0, None, "{}", sim.format_log());
+    assert_eq!(entries[0].response.0, None);
+    assert_eq!(entries[1].response.0, None, "{}", sim.format_log());
     assert_ne!(
         sim.routed_node(ClientID(0), 0),
         sim.routed_node(ClientID(0), 1),
-        "the stable stale-read scenario should route the two operations to different nodes",
+        "the stable stale-read scenario should route the two requests to different nodes",
     );
 }
 
@@ -79,7 +79,7 @@ fn seeded_uncoordinated_routing_can_violate_linearizability() {
     let mut sim = Simulator::new(1, 1..4);
     sim.register_client(
         ClientID(0),
-        vec![Operation::Put {
+        vec![Request::Put {
             key: Key("x".into()),
             value: Value("1".into()),
         }],
@@ -87,10 +87,10 @@ fn seeded_uncoordinated_routing_can_violate_linearizability() {
     sim.register_client(
         ClientID(1),
         vec![
-            Operation::Get {
+            Request::Get {
                 key: Key("y".into()),
             },
-            Operation::Get {
+            Request::Get {
                 key: Key("x".into()),
             },
         ],
@@ -98,8 +98,8 @@ fn seeded_uncoordinated_routing_can_violate_linearizability() {
     sim.schedule_tick_all(0);
     sim.run();
 
-    let history = sim.history();
-    assert!(history.all_returned());
+    let history = sim.request_history();
+    assert!(history.all_responded());
     assert_eq!(history.entries().len(), 3);
     assert!(sim.all_clients_done(), "{}", sim.format_log());
     assert_ne!(

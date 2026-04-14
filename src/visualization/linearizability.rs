@@ -1,7 +1,7 @@
 //! HTML visualization of linearizability check results.
 //!
 //! Produces a self-contained HTML page with swim lanes per client,
-//! operations as colored rectangles, linearization point markers,
+//! requests as colored rectangles, linearization point markers,
 //! and hover tooltips showing reference state transitions.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -19,8 +19,8 @@ const LANE_GAP: f64 = 20.0;
 const LANE_LABEL_WIDTH: f64 = 80.0;
 const TOP_MARGIN: f64 = 40.0;
 const RIGHT_MARGIN: f64 = 40.0;
-const OP_HEIGHT: f64 = 30.0;
-const MIN_OP_WIDTH: f64 = 8.0;
+const REQUEST_HEIGHT: f64 = 30.0;
+const MIN_REQUEST_WIDTH: f64 = 8.0;
 const TIME_SCALE: f64 = 60.0;
 const LP_RADIUS: f64 = 5.0;
 const LP_MARKER_OFFSET: f64 = 2.0;
@@ -58,7 +58,7 @@ pub fn visualize(entries: &[HistoryEntry], result: &CheckResult) -> String {
             if entry.client_id != client_id {
                 continue;
             }
-            write_operation(
+            write_request(
                 &mut svg,
                 entry,
                 entry_idx,
@@ -109,7 +109,7 @@ fn compute_linearization_points(
     let mut states = Vec::with_capacity(order.len());
     let mut state = BTreeMap::new();
     for &idx in &order {
-        apply_to_reference(&mut state, &entries[idx].operation);
+        apply_to_reference(&mut state, &entries[idx].request);
         states.push(state.clone());
     }
 
@@ -166,7 +166,7 @@ fn write_lane_label(html: &mut String, client_id: crate::ClientID, lane_y: f64) 
     .unwrap();
 }
 
-fn write_operation(
+fn write_request(
     html: &mut String,
     entry: &HistoryEntry,
     entry_idx: usize,
@@ -177,8 +177,8 @@ fn write_operation(
 ) {
     let x1 = time_to_x(entry.invoke_time);
     let x2 = time_to_x(entry.return_time);
-    let width = (x2 - x1).max(MIN_OP_WIDTH);
-    let y = lane_y + (LANE_HEIGHT - OP_HEIGHT) / 2.0;
+    let width = (x2 - x1).max(MIN_REQUEST_WIDTH);
+    let y = lane_y + (LANE_HEIGHT - REQUEST_HEIGHT) / 2.0;
     let center_x = x1 + width / 2.0;
     let marker_y = y - LP_MARKER_OFFSET;
 
@@ -190,7 +190,7 @@ fn write_operation(
 
     let mut tooltip = format!(
         "{} {} -> {}\nt={}..{}",
-        entry.client_id, entry.operation, entry.result, entry.invoke_time, entry.return_time,
+        entry.client_id, entry.request, entry.response, entry.invoke_time, entry.return_time,
     );
     if let Some(pos) = lp_pos {
         let prev_state = if pos > 0 {
@@ -212,15 +212,15 @@ fn write_operation(
 
     write!(
         html,
-        r#"<rect x="{x1}" y="{y}" width="{width}" height="{OP_HEIGHT}" rx="4" fill="{fill}" stroke="{stroke}" stroke-width="1.5" class="op-rect" data-tooltip="{tooltip_escaped}"/>"#,
+        r#"<rect x="{x1}" y="{y}" width="{width}" height="{REQUEST_HEIGHT}" rx="4" fill="{fill}" stroke="{stroke}" stroke-width="1.5" class="request-rect" data-tooltip="{tooltip_escaped}"/>"#,
     )
     .unwrap();
 
-    let label_y = y + OP_HEIGHT / 2.0 + 4.0;
-    let op = &entry.operation;
+    let label_y = y + REQUEST_HEIGHT / 2.0 + 4.0;
+    let request = &entry.request;
     write!(
         html,
-        r#"<text x="{center_x}" y="{label_y}" text-anchor="middle" class="op-label">{op}</text>"#,
+        r#"<text x="{center_x}" y="{label_y}" text-anchor="middle" class="request-label">{request}</text>"#,
     )
     .unwrap();
 
@@ -257,15 +257,15 @@ fn write_lp_lines(
 
     let lane_of = |client_id: crate::ClientID| -> f64 {
         let lane_idx = clients.iter().position(|&c| c == client_id).unwrap();
-        lane_y(lane_idx) + (LANE_HEIGHT - OP_HEIGHT) / 2.0 - LP_MARKER_OFFSET
+        lane_y(lane_idx) + (LANE_HEIGHT - REQUEST_HEIGHT) / 2.0 - LP_MARKER_OFFSET
     };
 
     for window in lp_order.windows(2) {
         let ea = &entries[window[0]];
         let eb = &entries[window[1]];
 
-        let xa = op_center_x(ea);
-        let xb = op_center_x(eb);
+        let xa = request_center_x(ea);
+        let xb = request_center_x(eb);
         let ya = lane_of(ea.client_id);
         let yb = lane_of(eb.client_id);
 
@@ -277,10 +277,10 @@ fn write_lp_lines(
     }
 }
 
-fn op_center_x(entry: &HistoryEntry) -> f64 {
+fn request_center_x(entry: &HistoryEntry) -> f64 {
     let x1 = time_to_x(entry.invoke_time);
     let x2 = time_to_x(entry.return_time);
-    let width = (x2 - x1).max(MIN_OP_WIDTH);
+    let width = (x2 - x1).max(MIN_REQUEST_WIDTH);
     x1 + width / 2.0
 }
 
@@ -308,7 +308,7 @@ fn summary_html(result: &CheckResult) -> String {
         CheckResult::Ok { linearization } => {
             write!(
                 html,
-                "Result: Linearizable ({} operations)",
+                "Result: Linearizable ({} requests)",
                 linearization.len()
             )
             .unwrap();
@@ -320,7 +320,7 @@ fn summary_html(result: &CheckResult) -> String {
         } => {
             write!(
                 html,
-                "Result: Violation (linearized {} operations before failure)\nReference state at failure: {}\nFailed candidates: {}",
+                "Result: Violation (linearized {} requests before failure)\nReference state at failure: {}\nFailed candidates: {}",
                 linearized_prefix.len(),
                 format_state(state_at_failure),
                 failed_candidates.len(),
@@ -333,7 +333,7 @@ fn summary_html(result: &CheckResult) -> String {
 }
 
 const TOOLTIP_SCRIPT: &str = r##"const tooltip = document.getElementById('tooltip');
-document.querySelectorAll('.op-rect').forEach(rect => {
+document.querySelectorAll('.request-rect').forEach(rect => {
   rect.addEventListener('mouseenter', e => {
     tooltip.textContent = rect.getAttribute('data-tooltip');
     tooltip.style.display = 'block';
