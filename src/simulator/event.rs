@@ -71,4 +71,8 @@ impl EventQueue {
     pub(crate) fn next(&mut self) -> Option<(u64, Event)> {
         self.queue.pop().map(|te| (te.timestamp, te.event))
     }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.queue.is_empty()
+    }
 }
