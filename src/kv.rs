@@ -1,6 +1,12 @@
+//! Request and response data types for the key-value store model.
+//!
+//! Keys and values are modeled as owned strings. That is enough for this
+//! project because the simulator focuses on routing, timing, and consistency
+//! behavior rather than binary encodings or type-rich application payloads.
+
 use std::fmt;
 
-/// A key in the key-value store.
+/// A string key in the modeled key-value store.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Key(pub String);
 
@@ -10,7 +16,7 @@ impl fmt::Display for Key {
     }
 }
 
-/// A value in the key-value store.
+/// A string value in the modeled key-value store.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Value(pub String);
 
@@ -20,9 +26,9 @@ impl fmt::Display for Value {
     }
 }
 
-/// An operation on the key-value store.
+/// A client request against the key-value store.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Operation {
+pub enum Request {
     /// Insert or update a key. Returns the previous value, if any.
     Put { key: Key, value: Value },
     /// Read a key. Returns the current value.
@@ -31,30 +37,30 @@ pub enum Operation {
     Delete { key: Key },
 }
 
-impl Operation {
-    /// The key this operation targets.
+impl Request {
+    /// The key this request targets.
     pub fn key(&self) -> &Key {
         match self {
-            Operation::Put { key, .. } | Operation::Get { key } | Operation::Delete { key } => key,
+            Request::Put { key, .. } | Request::Get { key } | Request::Delete { key } => key,
         }
     }
 }
 
-impl fmt::Display for Operation {
+impl fmt::Display for Request {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Operation::Put { key, value } => write!(f, "Put({key}, \"{value}\")"),
-            Operation::Get { key } => write!(f, "Get({key})"),
-            Operation::Delete { key } => write!(f, "Delete({key})"),
+            Request::Put { key, value } => write!(f, "Put({key}, \"{value}\")"),
+            Request::Get { key } => write!(f, "Get({key})"),
+            Request::Delete { key } => write!(f, "Delete({key})"),
         }
     }
 }
 
-/// The result of an operation.
+/// A response to a client request.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct OperationResult(pub Option<Value>);
+pub struct Response(pub Option<Value>);
 
-impl fmt::Display for OperationResult {
+impl fmt::Display for Response {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.0 {
             Some(v) => write!(f, "Some(\"{v}\")"),

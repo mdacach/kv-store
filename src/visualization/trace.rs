@@ -1,15 +1,15 @@
 //! Message-flow trace visualization.
 //!
-//! Renders the simulator's action log as an interactive HTML page showing
+//! Renders the simulator's event log as an interactive HTML page showing
 //! Send/Deliver arrows between actors on a timeline. Color-coded by
-//! operation type (Put/Get/Delete), with step-by-step playback controls
+//! request type (Put/Get/Delete), with step-by-step playback controls
 //! and hover tooltips.
 
 use std::collections::HashMap;
 use std::fmt::Write;
 
-use crate::simulator::{LogEntry, Simulator};
-use crate::{ActorId, Message, MessagePayload, Operation, OperationResult};
+use crate::simulator::{EventEntry, Simulator};
+use crate::{ActorId, Message, MessagePayload, Request, Response};
 
 const HTML_TEMPLATE: &str = include_str!("trace.html");
 
@@ -44,58 +44,59 @@ fn boundary_client_id_of(msg: &Message) -> Option<u8> {
     }
 }
 
-fn op_kind(op: &Operation) -> &'static str {
-    match op {
-        Operation::Put { .. } => "Put",
-        Operation::Get { .. } => "Get",
-        Operation::Delete { .. } => "Delete",
+fn request_kind(request: &Request) -> &'static str {
+    match request {
+        Request::Put { .. } => "Put",
+        Request::Get { .. } => "Get",
+        Request::Delete { .. } => "Delete",
     }
 }
 
-fn build_op_map(log: &[LogEntry]) -> HashMap<(u8, u64), &'static str> {
+/// Build a lookup from a client request key to request kind.
+fn build_request_map(log: &[EventEntry]) -> HashMap<(u8, u64), &'static str> {
     let mut map = HashMap::new();
     for entry in log {
         let msg = match entry {
-            LogEntry::Send { message, .. } => message,
+            EventEntry::Send { message, .. } => message,
             _ => continue,
         };
         if let MessagePayload::ClientRequest {
-            operation_id,
-            ref operation,
+            request_id,
+            ref request,
         } = msg.payload
             && let Some(client_id) = boundary_client_id_of(msg)
         {
-            map.insert((client_id, operation_id), op_kind(operation));
+            map.insert((client_id, request_id), request_kind(request));
         }
     }
     map
 }
 
-fn request_label(op: &Operation) -> String {
-    match op {
-        Operation::Put { key, value } => format!("Put {key}={value}"),
-        Operation::Get { key } => format!("Get {key}"),
-        Operation::Delete { key } => format!("Del {key}"),
+fn request_label(request: &Request) -> String {
+    match request {
+        Request::Put { key, value } => format!("Put {key}={value}"),
+        Request::Get { key } => format!("Get {key}"),
+        Request::Delete { key } => format!("Del {key}"),
     }
 }
 
-fn response_label(result: &OperationResult) -> String {
-    match &result.0 {
+fn response_label(response: &Response) -> String {
+    match &response.0 {
         Some(v) => format!("\u{2192} {v}"),
         None => "\u{2192} None".into(),
     }
 }
 
-fn request_detail(op: &Operation) -> String {
-    match op {
-        Operation::Put { key, value } => format!("Put key={key} value={value}"),
-        Operation::Get { key } => format!("Get key={key}"),
-        Operation::Delete { key } => format!("Delete key={key}"),
+fn request_detail(request: &Request) -> String {
+    match request {
+        Request::Put { key, value } => format!("Put key={key} value={value}"),
+        Request::Get { key } => format!("Get key={key}"),
+        Request::Delete { key } => format!("Delete key={key}"),
     }
 }
 
-fn response_detail(result: &OperationResult) -> String {
-    match &result.0 {
+fn response_detail(response: &Response) -> String {
+    match &response.0 {
         Some(v) => format!("Result: {v}"),
         None => "Result: None".into(),
     }
@@ -111,64 +112,64 @@ fn json_escape(s: &str) -> String {
 /// Extract JSON fields common to both Send and Deliver entries.
 fn payload_fields(
     msg: &Message,
-    op_map: &HashMap<(u8, u64), &'static str>,
-) -> (String, String, u64, u8, String) {
-    let cid = boundary_client_id_of(msg)
+    request_map: &HashMap<(u8, u64), &'static str>,
+) -> (String, String, u64, u64, String) {
+    let client_id = boundary_client_id_of(msg)
         .expect("all runtime messages should include a client as sender or recipient");
     match &msg.payload {
         MessagePayload::ClientRequest {
-            operation_id,
-            operation,
+            request_id,
+            request,
         } => {
-            let kind = op_kind(operation);
+            let kind = request_kind(request);
             (
                 format!("{kind}Req"),
-                request_label(operation),
-                *operation_id,
-                cid,
-                request_detail(operation),
+                request_label(request),
+                *request_id,
+                u64::from(client_id),
+                request_detail(request),
             )
         }
         MessagePayload::ClientResponse {
-            operation_id,
-            result,
+            request_id,
+            response,
         } => {
-            let kind = op_map
-                .get(&(cid, *operation_id))
+            let kind = request_map
+                .get(&(client_id, *request_id))
                 .copied()
                 .unwrap_or("?");
             (
                 format!("{kind}Resp"),
-                response_label(result),
-                *operation_id,
-                cid,
-                response_detail(result),
+                response_label(response),
+                *request_id,
+                u64::from(client_id),
+                response_detail(response),
             )
         }
     }
 }
 
-fn entry_json(e: &LogEntry, op_map: &HashMap<(u8, u64), &'static str>) -> Option<String> {
+fn entry_json(e: &EventEntry, request_map: &HashMap<(u8, u64), &'static str>) -> Option<String> {
     match e {
-        LogEntry::TickAll { .. } => None,
-        LogEntry::Send {
+        EventEntry::TickAll { .. } => None,
+        EventEntry::Send {
             at,
             deliver_at,
             message: msg,
         } => {
-            let (msg_type, label, op_id, cid, detail) = payload_fields(msg, op_map);
+            let (msg_type, label, request_id, cid, detail) = payload_fields(msg, request_map);
             Some(format!(
-                r#"{{"kind":"send","at":{at},"deliver_at":{deliver_at},"from":"{f}","to":"{t}","msgType":"{msg_type}","label":"{label}","opId":{op_id},"clientId":{cid},"detail":"{detail}"}}"#,
+                r#"{{"kind":"send","at":{at},"deliver_at":{deliver_at},"from":"{f}","to":"{t}","msgType":"{msg_type}","label":"{label}","requestId":{request_id},"clientId":{cid},"detail":"{detail}"}}"#,
                 f = actor_name(&msg.from),
                 t = actor_name(&msg.to),
                 label = json_escape(&label),
                 detail = json_escape(&detail),
             ))
         }
-        LogEntry::Deliver { at, msg } => {
-            let (msg_type, label, op_id, cid, detail) = payload_fields(msg, op_map);
+        EventEntry::Deliver { at, msg } => {
+            let (msg_type, label, request_id, cid, detail) = payload_fields(msg, request_map);
             Some(format!(
-                r#"{{"kind":"deliver","at":{at},"from":"{f}","to":"{t}","msgType":"{msg_type}","label":"{label}","opId":{op_id},"clientId":{cid},"detail":"{detail}"}}"#,
+                r#"{{"kind":"deliver","at":{at},"from":"{f}","to":"{t}","msgType":"{msg_type}","label":"{label}","requestId":{request_id},"clientId":{cid},"detail":"{detail}"}}"#,
                 f = actor_name(&msg.from),
                 t = actor_name(&msg.to),
                 label = json_escape(&label),
@@ -179,7 +180,7 @@ fn entry_json(e: &LogEntry, op_map: &HashMap<(u8, u64), &'static str>) -> Option
 }
 
 fn scenario_json(name: &str, sim: &Simulator) -> String {
-    let op_map = build_op_map(sim.log());
+    let request_map = build_request_map(sim.event_log().entries());
 
     let mut actors = Vec::new();
     for id in &sim.client_ids() {
@@ -195,12 +196,13 @@ fn scenario_json(name: &str, sim: &Simulator) -> String {
         .collect::<Vec<_>>()
         .join(",");
     let entries: Vec<String> = sim
-        .log()
+        .event_log()
+        .entries()
         .iter()
-        .filter_map(|e| entry_json(e, &op_map))
+        .filter_map(|e| entry_json(e, &request_map))
         .collect();
 
-    let history = sim.history();
+    let history = sim.request_history();
     let total = history.entries().len();
     let client_summaries: Vec<String> = sim
         .client_ids()
@@ -211,7 +213,7 @@ fn scenario_json(name: &str, sim: &Simulator) -> String {
                 .iter()
                 .filter(|e| e.client_id == *cid)
                 .count();
-            format!(r#"{{"id":"Client {}","ops":{count}}}"#, cid.0)
+            format!(r#"{{"id":"Client {}","requests":{count}}}"#, cid.0)
         })
         .collect();
 

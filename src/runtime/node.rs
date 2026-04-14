@@ -1,8 +1,8 @@
-//! Database node — holds data and applies operations on that data.
+//! Database node — holds data and serves requests against that data.
 
 use std::collections::BTreeMap;
 
-use crate::kv::{Key, Operation, OperationResult, Value};
+use crate::kv::{Key, Request, Response, Value};
 use crate::protocol::{ActorId, Message, MessagePayload, NodeID, StateMachine};
 
 /// A single database node backed by an in-memory `BTreeMap`.
@@ -29,20 +29,20 @@ impl Node {
         self.database.get(key).cloned()
     }
 
-    /// Apply an operation, mutating inner state in place.
-    pub fn apply(&mut self, operation: &Operation) -> OperationResult {
-        match operation {
-            Operation::Put { key, value } => {
+    /// Apply a request, mutating inner state in place.
+    pub fn apply(&mut self, request: &Request) -> Response {
+        match request {
+            Request::Put { key, value } => {
                 let old_value = self.database.insert(key.clone(), value.clone());
-                OperationResult(old_value)
+                Response(old_value)
             }
-            Operation::Get { key } => {
+            Request::Get { key } => {
                 let current_value = self.database.get(key).cloned();
-                OperationResult(current_value)
+                Response(current_value)
             }
-            Operation::Delete { key } => {
+            Request::Delete { key } => {
                 let old_value = self.database.remove(key);
-                OperationResult(old_value)
+                Response(old_value)
             }
         }
     }
@@ -51,19 +51,19 @@ impl Node {
 impl StateMachine for Node {
     fn on_message(&mut self, msg: &Message, _at_time: u64) -> Vec<Message> {
         let MessagePayload::ClientRequest {
-            operation_id,
-            ref operation,
+            request_id,
+            ref request,
         } = msg.payload
         else {
             return vec![];
         };
-        let result = self.apply(operation);
+        let response = self.apply(request);
         vec![Message {
             from: ActorId::Node(self.id),
             to: msg.from,
             payload: MessagePayload::ClientResponse {
-                operation_id,
-                result,
+                request_id,
+                response,
             },
         }]
     }
@@ -85,34 +85,34 @@ mod tests {
     fn put_get_delete() {
         let mut node = Node::new(NodeID(0));
         assert_eq!(
-            node.apply(&Operation::Get { key: key("x") }),
-            OperationResult(None)
+            node.apply(&Request::Get { key: key("x") }),
+            Response(None)
         );
         assert_eq!(
-            node.apply(&Operation::Put {
+            node.apply(&Request::Put {
                 key: key("x"),
                 value: val("1")
             }),
-            OperationResult(None)
+            Response(None)
         );
         assert_eq!(
-            node.apply(&Operation::Get { key: key("x") }),
-            OperationResult(Some(val("1")))
+            node.apply(&Request::Get { key: key("x") }),
+            Response(Some(val("1")))
         );
         assert_eq!(
-            node.apply(&Operation::Put {
+            node.apply(&Request::Put {
                 key: key("x"),
                 value: val("2")
             }),
-            OperationResult(Some(val("1")))
+            Response(Some(val("1")))
         );
         assert_eq!(
-            node.apply(&Operation::Delete { key: key("x") }),
-            OperationResult(Some(val("2")))
+            node.apply(&Request::Delete { key: key("x") }),
+            Response(Some(val("2")))
         );
         assert_eq!(
-            node.apply(&Operation::Get { key: key("x") }),
-            OperationResult(None)
+            node.apply(&Request::Get { key: key("x") }),
+            Response(None)
         );
     }
 }

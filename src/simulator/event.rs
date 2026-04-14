@@ -10,12 +10,12 @@ use std::collections::BinaryHeap;
 
 use crate::Message;
 
-/// A scheduled event in the simulation.
+/// An event in the simulation.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Event {
-    /// Call `tick` on every actor.
+    /// Call [`tick()`](crate::StateMachine::tick) on every actor.
     TickAll,
-    /// Deliver a message to its destination.
+    /// Deliver a [`Message`] to its destination.
     Deliver { message: Message },
 }
 

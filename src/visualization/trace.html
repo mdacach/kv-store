@@ -21,6 +21,14 @@
   --put: #F0883E;
   --get: #58A6FF;
   --delete: #F85149;
+  --client-role: #f4b266;
+  --client-role-bg: rgba(244, 178, 102, 0.14);
+  --client-role-border: rgba(244, 178, 102, 0.3);
+  --client-lane: rgba(244, 178, 102, 0.055);
+  --node-role: #66d1a8;
+  --node-role-bg: rgba(102, 209, 168, 0.14);
+  --node-role-border: rgba(102, 209, 168, 0.3);
+  --node-lane: rgba(102, 209, 168, 0.06);
   --font-ui: 'DM Sans', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
 }
@@ -172,6 +180,39 @@ function tx(s, x, y, a) {
 function baseType(msgType) { return msgType.replace(/Req|Resp$/, ''); }
 function color(msgType) { return COLORS[baseType(msgType)] || '#8b949e'; }
 function isResp(msgType) { return msgType.endsWith('Resp'); }
+function actorRole(name) {
+  if (name.startsWith('Client ')) return 'client';
+  if (name.startsWith('Node ')) return 'node';
+  return 'other';
+}
+function actorTheme(name) {
+  switch (actorRole(name)) {
+    case 'client':
+      return {
+        lane: 'var(--client-lane)',
+        guide: 'rgba(244, 178, 102, 0.24)',
+        badgeBg: 'var(--client-role-bg)',
+        badgeBorder: 'var(--client-role-border)',
+        text: 'var(--client-role)',
+      };
+    case 'node':
+      return {
+        lane: 'var(--node-lane)',
+        guide: 'rgba(102, 209, 168, 0.28)',
+        badgeBg: 'var(--node-role-bg)',
+        badgeBorder: 'var(--node-role-border)',
+        text: 'var(--node-role)',
+      };
+    default:
+      return {
+        lane: 'rgba(255,255,255,0.02)',
+        guide: '#1e2530',
+        badgeBg: 'rgba(255,255,255,0.08)',
+        badgeBorder: 'rgba(255,255,255,0.14)',
+        text: '#c9d1d9',
+      };
+  }
+}
 
 // ---- Legend ----
 (function() {
@@ -182,6 +223,8 @@ function isResp(msgType) { return msgType.endsWith('Resp'); }
   add('<span class="swatch" style="background:#F85149"></span> Delete');
   add('<span class="line-thick"></span> Request');
   add('<span class="line-thin"></span> Response');
+  add('<span class="swatch" style="background:var(--client-role)"></span> Client lane');
+  add('<span class="swatch" style="background:var(--node-role)"></span> Node lane');
 })();
 
 // ---- Scenario dropdown ----
@@ -248,9 +291,9 @@ const tip = $('tip');
 function showTip(e, evt) {
   let t = '';
   if (e.kind === 'send')
-    t = `${e.from} \u2192 ${e.to}\n${e.detail}\nSent t=${e.at}, arrives t=${e.deliver_at}\nop#${e.opId}`;
+    t = `${e.from} \u2192 ${e.to}\n${e.detail}\nSent t=${e.at}, arrives t=${e.deliver_at}\nrequest#${e.requestId}`;
   else if (e.kind === 'deliver')
-    t = `${e.to} receives from ${e.from}\n${e.detail}\nt=${e.at}\nop#${e.opId}`;
+    t = `${e.to} receives from ${e.from}\n${e.detail}\nt=${e.at}\nrequest#${e.requestId}`;
   tip.textContent = t; tip.style.display = 'block'; moveTip(evt);
 }
 function moveTip(evt) {
@@ -321,14 +364,13 @@ function load(idx) {
   defs.appendChild(gf);
   d.appendChild(defs);
 
-  // ---- Column shading (alternating bands) ----
+  // ---- Column shading ----
   for (let i = 0; i < nc; i++) {
-    if (i % 2 === 0) {
-      d.appendChild(mk('rect', {
-        x: M.l + i * CW, y: M.t - 14, width: CW, height: H - M.b - M.t + 14,
-        fill: 'rgba(255,255,255,0.018)'
-      }));
-    }
+    const theme = actorTheme(sc.actors[i]);
+    d.appendChild(mk('rect', {
+      x: M.l + i * CW, y: M.t - 14, width: CW, height: H - M.b - M.t + 14,
+      fill: theme.lane
+    }));
   }
 
   // ---- Dot grid ----
@@ -360,22 +402,22 @@ function load(idx) {
     }));
   });
 
-  // ---- Operation extent bars (left gutter) ----
-  const opGroups = {};
+  // ---- Request extent bars (left gutter) ----
+  const requestGroups = {};
   filt.forEach(e => {
-    const k = e.clientId + ':' + e.opId;
-    if (!opGroups[k]) opGroups[k] = { clientId: e.clientId, rows: [], type: e.msgType };
-    opGroups[k].rows.push(ti[e.at]);
-    if (e.deliver_at != null && ti[e.deliver_at] != null) opGroups[k].rows.push(ti[e.deliver_at]);
+    const k = e.clientId + ':' + e.requestId;
+    if (!requestGroups[k]) requestGroups[k] = { clientId: e.clientId, rows: [], type: e.msgType };
+    requestGroups[k].rows.push(ti[e.at]);
+    if (e.deliver_at != null && ti[e.deliver_at] != null) requestGroups[k].rows.push(ti[e.deliver_at]);
   });
   const clientList = [...new Set(filt.map(e => e.clientId))].sort((a, b) => a - b);
   const barW = 4, barGap = 3;
-  for (const op of Object.values(opGroups)) {
-    const minR = Math.min(...op.rows), maxR = Math.max(...op.rows);
+  for (const request of Object.values(requestGroups)) {
+    const minR = Math.min(...request.rows), maxR = Math.max(...request.rows);
     const y1 = ry(minR), y2 = ry(maxR);
-    const ci_idx = clientList.indexOf(op.clientId);
+    const ci_idx = clientList.indexOf(request.clientId);
     const x = 8 + ci_idx * (barW + barGap);
-    const c = COLORS[baseType(op.type)] || '#8b949e';
+    const c = COLORS[baseType(request.type)] || '#8b949e';
     d.appendChild(mk('rect', {
       x, y: y1 - 3, width: barW, height: Math.max(y2 - y1 + 6, 6),
       fill: c, opacity: .3, rx: 2
@@ -385,26 +427,24 @@ function load(idx) {
   // ---- Actor lanes ----
   for (let i = 0; i < nc; i++) {
     const x = cx(i);
+    const theme = actorTheme(sc.actors[i]);
     d.appendChild(mk('line', {
       x1: x, y1: M.t - 6, x2: x, y2: H - M.b,
-      stroke: '#1e2530', 'stroke-width': 1, 'stroke-dasharray': '4 4'
+      stroke: theme.guide, 'stroke-width': 1, 'stroke-dasharray': '4 4'
     }));
   }
 
   // ---- Actor header badges ----
   for (let i = 0; i < nc; i++) {
     const x = cx(i), name = sc.actors[i];
-    const isSrv = name === 'Server';
-    const bg   = isSrv ? 'rgba(88,166,255,0.10)' : 'rgba(240,136,62,0.10)';
-    const bord = isSrv ? 'rgba(88,166,255,0.25)' : 'rgba(240,136,62,0.25)';
-    const tc   = isSrv ? '#58A6FF'                : '#d9a06a';
+    const theme = actorTheme(name);
     const w = name.length * 7.2 + 22;
     d.appendChild(mk('rect', {
       x: x - w / 2, y: M.t - 44, width: w, height: 24,
-      fill: bg, stroke: bord, 'stroke-width': 1, rx: 12
+      fill: theme.badgeBg, stroke: theme.badgeBorder, 'stroke-width': 1, rx: 12
     }));
     d.appendChild(tx(name, x, M.t - 32, {
-      'font-size': 12, 'font-weight': 600, fill: tc, 'text-anchor': 'middle',
+      'font-size': 12, 'font-weight': 600, fill: theme.text, 'text-anchor': 'middle',
       'dominant-baseline': 'central', 'font-family': "'DM Sans', sans-serif"
     }));
   }
@@ -475,7 +515,7 @@ function load(idx) {
     g.addEventListener('mouseenter', evt => {
       showTip(e, evt);
       steps.forEach((g2, j) => {
-        if (j !== idx && filt[j].clientId === e.clientId && filt[j].opId === e.opId)
+        if (j !== idx && filt[j].clientId === e.clientId && filt[j].requestId === e.requestId)
           g2.classList.add('correlated');
       });
     });
@@ -505,8 +545,8 @@ function desc(e) {
 function outcomeText() {
   const r = T[curScenario].result;
   if (!r) return '';
-  const parts = r.clients.map(c => `${c.id}: ${c.ops} ops`).join(', ');
-  return `Completed: ${r.total} operations \u00B7 ${parts}`;
+  const parts = r.clients.map(c => `${c.id}: ${c.requests} requests`).join(', ');
+  return `Completed: ${r.total} requests \u00B7 ${parts}`;
 }
 
 // ---- Step management ----
