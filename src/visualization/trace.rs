@@ -29,27 +29,18 @@ pub fn render(scenarios: &[Scenario<'_>]) -> String {
     HTML_TEMPLATE.replace("__DATA__", &json)
 }
 
-/// Display name for an actor. Node and Server collapse to "Server" since the
-/// node sits behind the server and clients never see it directly.
-fn actor_name(a: &ActorId) -> &'static str {
+/// Display name for an actor.
+fn actor_name(a: &ActorId) -> String {
     match a {
-        ActorId::Server | ActorId::Node(_) => "Server",
-        ActorId::Client(id) => match id.0 {
-            0 => "Client 0",
-            1 => "Client 1",
-            2 => "Client 2",
-            3 => "Client 3",
-            4 => "Client 4",
-            _ => "Client ?",
-        },
+        ActorId::Node(id) => format!("Node {}", id.0),
+        ActorId::Client(id) => format!("Client {}", id.0),
     }
 }
 
-/// Extract the client-side ID from a message (one end is always a client).
-fn client_id_of(msg: &Message) -> u8 {
+fn boundary_client_id_of(msg: &Message) -> Option<u8> {
     match (&msg.from, &msg.to) {
-        (ActorId::Client(id), _) | (_, ActorId::Client(id)) => id.0,
-        _ => 0,
+        (ActorId::Client(id), _) | (_, ActorId::Client(id)) => Some(id.0),
+        _ => None,
     }
 }
 
@@ -61,8 +52,6 @@ fn op_kind(op: &Operation) -> &'static str {
     }
 }
 
-/// Build a lookup from (client_id, operation_id) to operation kind.
-/// Used to color-code response arrows by the operation they answer.
 fn build_op_map(log: &[LogEntry]) -> HashMap<(u8, u64), &'static str> {
     let mut map = HashMap::new();
     for entry in log {
@@ -74,8 +63,9 @@ fn build_op_map(log: &[LogEntry]) -> HashMap<(u8, u64), &'static str> {
             operation_id,
             ref operation,
         } = msg.payload
+            && let Some(client_id) = boundary_client_id_of(msg)
         {
-            map.insert((client_id_of(msg), operation_id), op_kind(operation));
+            map.insert((client_id, operation_id), op_kind(operation));
         }
     }
     map
@@ -123,7 +113,8 @@ fn payload_fields(
     msg: &Message,
     op_map: &HashMap<(u8, u64), &'static str>,
 ) -> (String, String, u64, u8, String) {
-    let cid = client_id_of(msg);
+    let cid = boundary_client_id_of(msg)
+        .expect("all runtime messages should include a client as sender or recipient");
     match &msg.payload {
         MessagePayload::ClientRequest {
             operation_id,
@@ -194,7 +185,9 @@ fn scenario_json(name: &str, sim: &Simulator) -> String {
     for id in &sim.client_ids() {
         actors.push(format!("Client {}", id.0));
     }
-    actors.push("Server".into());
+    for id in &sim.node_ids() {
+        actors.push(format!("Node {}", id.0));
+    }
 
     let actor_list = actors
         .iter()

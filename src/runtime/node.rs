@@ -24,6 +24,11 @@ impl Node {
         self.id
     }
 
+    /// Return the current value for `key` without mutating state.
+    pub fn value(&self, key: &Key) -> Option<Value> {
+        self.database.get(key).cloned()
+    }
+
     /// Apply an operation, mutating inner state in place.
     pub fn apply(&mut self, operation: &Operation) -> OperationResult {
         match operation {

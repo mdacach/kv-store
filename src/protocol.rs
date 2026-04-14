@@ -28,7 +28,6 @@ impl fmt::Display for ClientID {
 /// Identifier for any actor in the simulation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ActorId {
-    Server,
     Node(NodeID),
     Client(ClientID),
 }
@@ -36,7 +35,6 @@ pub enum ActorId {
 impl fmt::Display for ActorId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ActorId::Server => write!(f, "Server"),
             ActorId::Node(id) => write!(f, "Node({id})"),
             ActorId::Client(id) => write!(f, "Client({id})"),
         }
@@ -46,12 +44,12 @@ impl fmt::Display for ActorId {
 /// Payload of a message exchanged between actors.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MessagePayload {
-    /// Client -> Server: request to execute an operation.
+    /// Request to execute an operation.
     ClientRequest {
         operation_id: OperationID,
         operation: Operation,
     },
-    /// Server -> Client: result of a completed operation.
+    /// Result of a completed operation.
     ClientResponse {
         operation_id: OperationID,
         result: OperationResult,

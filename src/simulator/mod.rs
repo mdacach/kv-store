@@ -1,45 +1,45 @@
 //! Discrete-event simulator for the key-value store.
 //!
-//! Drives the server state machine via a priority-queue event loop.
-//! Client workload is managed internally by the simulator: each client has a
-//! queue of operations and at most one outstanding request at a time
-//! ("stop-and-wait").
+//! Owns a set of nodes, routes each client operation to one randomly-picked
+//! node, and drives all state machines through a priority-queue event loop.
 
 mod event;
+mod history;
+mod log;
+
+pub use history::History;
+pub use log::LogEntry;
 
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
-use std::fmt;
 use std::ops::Range;
 
 use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
+use tracing::warn;
 
-use crate::analysis::history::History;
+use crate::analysis::history::HistoryEntry;
 use crate::analysis::linearizability::{self, CheckResult};
-use crate::kv::Operation;
-use crate::server::Server;
-use crate::{ActorId, ClientID, Message, MessagePayload, OperationID, StateMachine};
+use crate::kv::{Key, Operation, Value};
+use crate::protocol::{
+    ActorId, ClientID, Message, MessagePayload, NodeID, OperationID, StateMachine,
+};
+use crate::runtime::node::Node;
 
 use event::{Event, EventQueue};
+use log::EventLog;
 
-/// Per-client workload state, managed by the simulator.
-///
-/// Clients use **stop-and-wait**: a client sends one request, waits for
-/// the response, and only then sends the next.
+/// Default number of nodes in a newly created simulator.
+pub const DEFAULT_NODE_COUNT: u8 = 3;
+
 struct ClientState {
-    /// Operations remaining to be sent, in order.
     operations: VecDeque<Operation>,
-    /// The operation currently awaiting a response, if any.
     pending_operation: Option<OperationID>,
-    /// Counter for assigning unique operation IDs **within this client**.
     next_operation: OperationID,
 }
 
 impl ClientState {
-    /// Try to start the next operation. Returns `None` if a request is
-    /// already in flight or no operations remain.
     fn try_next_operation(&mut self) -> Option<(OperationID, Operation)> {
         if self.pending_operation.is_some() {
             return None;
@@ -51,13 +51,11 @@ impl ClientState {
         Some((operation_id, operation))
     }
 
-    /// Mark the pending operation as complete. Panics if `op_id` doesn't
-    /// match the currently pending operation.
-    fn complete_operation(&mut self, op_id: OperationID) {
+    fn complete_operation(&mut self, operation_id: OperationID) {
         assert_eq!(
             self.pending_operation,
-            Some(op_id),
-            "response op_id {op_id} does not match pending {:?}",
+            Some(operation_id),
+            "response op_id {operation_id} does not match pending {:?}",
             self.pending_operation
         );
         self.pending_operation = None;
@@ -68,41 +66,42 @@ impl ClientState {
     }
 }
 
-/// Discrete-event simulator that drives the key-value server and client workload.
 pub struct Simulator {
-    /// The server state machine.
-    server: Server,
-    /// Per-client workload state.
+    nodes: BTreeMap<NodeID, Node>,
     clients: BTreeMap<ClientID, ClientState>,
-    /// Priority queue of pending events, ordered by (timestamp, sequence number).
+    operation_routes: BTreeMap<(ClientID, OperationID), NodeID>,
     event_queue: EventQueue,
-    /// Current simulated time.
     clock: u64,
-    /// Seeded RNG for reproducibility.
     rng: ChaCha8Rng,
-    /// Random delay added to each message delivery.
     delivery_delay: Range<u64>,
-    /// Append-only log of all events for debugging and visualization.
-    action_log: Vec<LogEntry>,
-    /// History of client operations for linearizability checking.
+    event_log: EventLog,
     history: History,
 }
 
 impl Simulator {
-    pub fn new(server: Server, seed: u64, delivery_delay: Range<u64>) -> Self {
+    pub fn new(seed: u64, delivery_delay: Range<u64>) -> Self {
+        Self::with_node_count(DEFAULT_NODE_COUNT, seed, delivery_delay)
+    }
+
+    pub fn with_node_count(node_count: u8, seed: u64, delivery_delay: Range<u64>) -> Self {
+        assert!(node_count > 0, "simulator must own at least one node");
+        let nodes = (0..node_count)
+            .map(NodeID)
+            .map(|id| (id, Node::new(id)))
+            .collect();
         Self {
-            server,
+            nodes,
             clients: BTreeMap::new(),
+            operation_routes: BTreeMap::new(),
             event_queue: EventQueue::new(),
             clock: 0,
             rng: ChaCha8Rng::seed_from_u64(seed),
             delivery_delay,
-            action_log: Vec::new(),
+            event_log: EventLog::new(),
             history: History::new(),
         }
     }
 
-    /// Register a client with a workload of operations to execute.
     pub fn register_client(&mut self, id: ClientID, operations: Vec<Operation>) {
         self.clients.insert(
             id,
@@ -114,32 +113,21 @@ impl Simulator {
         );
     }
 
-    /// Insert an event into the queue at an exact time.
-    ///
-    /// This is the single primitive for all event scheduling. It knows
-    /// nothing about network delays — callers decide the timestamp.
-    /// `send()` adds network delay before calling this; `schedule_tick_all()`
-    /// passes the time directly.
     fn schedule(&mut self, event: Event, at_time: u64) {
         self.event_queue.insert(at_time, event);
     }
 
-    /// Schedule a tick for all actors at the given time.
     pub fn schedule_tick_all(&mut self, at_time: u64) {
         self.schedule(Event::TickAll, at_time);
     }
 
-    /// Send a message through the simulated network.
-    ///
-    /// Network latency is simulated by adding a random delivery delay sourced
-    /// from `self.delivery_delay`.
-    fn send(&mut self, message: Message) {
+    fn send_message(&mut self, message: Message) {
         let delay = (!self.delivery_delay.is_empty())
             .then(|| self.rng.random_range(self.delivery_delay.clone()))
             .unwrap_or(0);
         let deliver_at = self.clock + delay;
 
-        self.action_log.push(LogEntry::Send {
+        self.event_log.record(LogEntry::Send {
             at: self.clock,
             deliver_at,
             message: message.clone(),
@@ -148,48 +136,56 @@ impl Simulator {
         self.schedule(Event::Deliver { message }, deliver_at);
     }
 
-    /// Send messages through the simulated network.
-    fn send_all(&mut self, messages: Vec<Message>) {
+    fn send_messages(&mut self, messages: Vec<Message>) {
         for msg in messages {
-            self.send(msg);
+            self.send_message(msg);
         }
     }
 
-    /// Start the next queued operation for a client, if possible.
-    ///
-    /// Returns an empty `Vec` if the client is already waiting for a
-    /// response or has no operations remaining.
-    fn try_next_client_operation(&mut self, client_id: ClientID) -> Vec<Message> {
+    fn choose_node(&mut self) -> NodeID {
+        let node_ids = self.node_ids();
+        assert!(
+            !node_ids.is_empty(),
+            "simulator must have at least one node when routing an operation"
+        );
+        let index = self.rng.random_range(0..node_ids.len());
+        node_ids[index]
+    }
+
+    fn try_next_client_operation(&mut self, client_id: ClientID) -> Option<Message> {
         let Some(client) = self.clients.get_mut(&client_id) else {
-            return vec![];
+            warn!(?client_id, "simulator tried to start an operation for an unknown client");
+            return None;
         };
         let Some((operation_id, operation)) = client.try_next_operation() else {
-            return vec![];
+            return None;
         };
+        let node_id = self.choose_node();
+        assert!(
+            self.operation_routes
+                .insert((client_id, operation_id), node_id)
+                .is_none(),
+            "duplicate route recorded for {client_id} op {operation_id}"
+        );
         self.history
             .record_invoke(client_id, operation_id, operation.clone(), self.clock);
-        vec![Message {
+        Some(Message {
             from: ActorId::Client(client_id),
-            to: ActorId::Server,
+            to: ActorId::Node(node_id),
             payload: MessagePayload::ClientRequest {
                 operation_id,
                 operation,
             },
-        }]
+        })
     }
 
-    /// Process a response delivered to a client: clear the pending operation
-    /// and immediately issue the next one if available.
-    ///
-    /// To simulate "think time" between operations, this could instead
-    /// schedule a future tick rather than dispatching immediately.
     fn process_response_to_client(
         &mut self,
         client_id: ClientID,
         message: &Message,
     ) -> Vec<Message> {
         let MessagePayload::ClientResponse {
-            operation_id: op_id,
+            operation_id,
             result,
         } = &message.payload
         else {
@@ -198,32 +194,34 @@ impl Simulator {
                 message.payload
             );
         };
+        assert_eq!(
+            message.to,
+            ActorId::Client(client_id),
+            "response recipient must match the client being completed"
+        );
         self.history
-            .record_return(client_id, *op_id, result.clone(), self.clock);
+            .record_return(client_id, *operation_id, result.clone(), self.clock);
         let client = self
             .clients
             .get_mut(&client_id)
             .expect("response delivered to unregistered client");
-        client.complete_operation(*op_id);
-        self.try_next_client_operation(client_id)
+        client.complete_operation(*operation_id);
+        self.try_next_client_operation(client_id).into_iter().collect()
     }
 
-    /// Process one event in the queue. Returns `false` if the queue was empty.
     pub fn step(&mut self) -> bool {
         let Some((timestamp, event)) = self.event_queue.next() else {
             return false;
         };
         self.clock = timestamp;
 
-        // Processing an event may produce outgoing messages, which are
-        // sent through the simulated network (with delivery delay).
         let outgoing_messages = match event {
             Event::TickAll => {
-                self.action_log.push(LogEntry::TickAll { at: self.clock });
+                self.event_log.record(LogEntry::TickAll { at: self.clock });
                 self.dispatch_tick_all()
             }
             Event::Deliver { message: msg } => {
-                self.action_log.push(LogEntry::Deliver {
+                self.event_log.record(LogEntry::Deliver {
                     at: self.clock,
                     msg: msg.clone(),
                 });
@@ -231,35 +229,43 @@ impl Simulator {
             }
         };
 
-        self.send_all(outgoing_messages);
+        self.send_messages(outgoing_messages);
         true
     }
 
-    /// Process events until the queue is empty.
     pub fn run(&mut self) {
         while self.step() {}
     }
 
     fn dispatch_tick_all(&mut self) -> Vec<Message> {
-        let mut outgoing_messages = self.server.tick(self.clock);
         let client_ids: Vec<ClientID> = self.clients.keys().copied().collect();
-        for id in client_ids {
-            outgoing_messages.extend(self.try_next_client_operation(id));
-        }
-        outgoing_messages
+        client_ids
+            .into_iter()
+            .filter_map(|id| self.try_next_client_operation(id))
+            .collect()
     }
 
     fn dispatch_message(&mut self, to: ActorId, message: &Message) -> Vec<Message> {
         match to {
-            ActorId::Server => self.server.on_message(message, self.clock),
-            ActorId::Node(_) => vec![],
+            ActorId::Node(node_id) => self.dispatch_to_node(node_id, message),
             ActorId::Client(id) => self.process_response_to_client(id, message),
         }
     }
 
-    /// Returns `true` if every client has completed all operations.
+    fn dispatch_to_node(&mut self, node_id: NodeID, message: &Message) -> Vec<Message> {
+        let Some(node) = self.nodes.get_mut(&node_id) else {
+            warn!(?node_id, ?message, "message delivered to an unknown node");
+            return vec![];
+        };
+        node.on_message(message, self.clock)
+    }
+
     pub fn all_clients_done(&self) -> bool {
         self.clients.values().all(|c| c.is_done())
+    }
+
+    pub fn is_quiescent(&self) -> bool {
+        self.event_queue.is_empty() && self.all_clients_done() && self.history.all_returned()
     }
 
     pub fn clock(&self) -> u64 {
@@ -270,70 +276,35 @@ impl Simulator {
         &self.history
     }
 
-    /// Check whether the recorded history is linearizable.
+    pub fn history_entries(&self) -> &[HistoryEntry] {
+        self.history.entries()
+    }
+
     pub fn check_linearizable(&self) -> CheckResult {
         linearizability::check_linearizable(self.history.entries())
     }
 
     pub fn log(&self) -> &[LogEntry] {
-        &self.action_log
+        self.event_log.entries()
     }
 
-    /// Returns the IDs of all registered clients, in sorted order.
     pub fn client_ids(&self) -> Vec<ClientID> {
         self.clients.keys().copied().collect()
     }
 
-    pub fn format_log(&self) -> String {
-        self.action_log
-            .iter()
-            .map(|e| e.to_string())
-            .collect::<Vec<_>>()
-            .join("\n")
+    pub fn node_ids(&self) -> Vec<NodeID> {
+        self.nodes.keys().copied().collect()
     }
-}
 
-/// A record of something that happened during simulation.
-#[derive(Debug, Clone)]
-pub enum LogEntry {
-    TickAll {
-        at: u64,
-    },
-    Deliver {
-        at: u64,
-        msg: Message,
-    },
-    Send {
-        at: u64,
-        deliver_at: u64,
-        message: Message,
-    },
-}
+    pub fn routed_node(&self, client_id: ClientID, operation_id: OperationID) -> Option<NodeID> {
+        self.operation_routes.get(&(client_id, operation_id)).copied()
+    }
 
-impl fmt::Display for LogEntry {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            LogEntry::TickAll { at } => {
-                write!(f, "t={at:<4} [TickAll]")
-            }
-            LogEntry::Deliver { at, msg } => {
-                write!(
-                    f,
-                    "t={at:<4} [Deliver] {} -> {}: {:?}",
-                    msg.from, msg.to, msg.payload,
-                )
-            }
-            LogEntry::Send {
-                at,
-                deliver_at,
-                message: msg,
-            } => {
-                write!(
-                    f,
-                    "t={at:<4} [Send]    {} -> {}: {:?} (deliver@{deliver_at})",
-                    msg.from, msg.to, msg.payload,
-                )
-            }
-        }
+    pub fn node_value(&self, node_id: NodeID, key: &Key) -> Option<Value> {
+        self.nodes.get(&node_id).and_then(|node| node.value(key))
+    }
+
+    pub fn format_log(&self) -> String {
+        self.event_log.format()
     }
 }
