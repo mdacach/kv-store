@@ -7,9 +7,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
-use crate::history::HistoryEntry;
-use crate::linearizability_checker::{CheckResult, apply_to_reference};
-use crate::node::{Key, Value};
+use crate::analysis::history::HistoryEntry;
+use crate::analysis::linearizability::{CheckResult, apply_to_reference};
+use crate::kv::{Key, Value};
 
 const HTML_TEMPLATE: &str = include_str!("linearizability.html");
 

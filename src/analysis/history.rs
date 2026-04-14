@@ -7,8 +7,8 @@
 
 use std::collections::BTreeMap;
 
-use crate::node::{Operation, OperationResult};
-use crate::{ClientID, OperationID};
+use crate::kv::{Operation, OperationResult};
+use crate::protocol::{ClientID, OperationID};
 
 /// A completed client operation with timing information.
 #[derive(Debug, Clone, PartialEq, Eq)]
