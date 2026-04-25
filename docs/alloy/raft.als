@@ -42,10 +42,10 @@ sig RequestVoteResponse extends Message {
 abstract sig Bool {}
 one sig True, False extends Bool {}
 
-// Each node must always be in exactly one Raft role.
 var sig Follower, Candidate, Leader in Node {}
 
-fact rolePartition {
+// Safety property: every node should always be in exactly one Raft role.
+assert RolePartition {
   always {
     Node = Follower + Candidate + Leader
     disj[Follower, Candidate, Leader]
@@ -77,3 +77,5 @@ fact traces {
 run scaffold {
   some Node
 } for 3 Node, 4 Term, 6 Message
+
+check RolePartition for 3 Node, 4 Term, 6 Message
