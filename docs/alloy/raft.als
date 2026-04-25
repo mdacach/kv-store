@@ -69,13 +69,49 @@ pred init {
   no InFlight
 }
 
-// Placeholder temporal model.
-fact traces {
-  init
+// A follower or candidate times out and starts a new election in the next term.
+pred timeout[n: Node] {
+  n in Follower + Candidate
+  n.currentTerm != termOrd/last
+
+  // Timing out moves the node into candidate state for the next term.
+  Follower' = Follower - n
+  Candidate' = Candidate + n
+  Leader' = Leader
+
+  // Only the timing-out node's term changes.
+  currentTerm' =
+    (currentTerm - (n -> Term)) + (n -> n.currentTerm.(termOrd/next))
+
+  votedFor' = votedFor
+  // Timeouts do not directly change the network. Vote requests will come
+  // as part of another transition.
+  InFlight' = InFlight
 }
 
-run scaffold {
+// A no-op transition to allow for lasso traces.
+pred stutter {
+  Follower' = Follower
+  Candidate' = Candidate
+  Leader' = Leader
+  currentTerm' = currentTerm
+  votedFor' = votedFor
+  InFlight' = InFlight
+}
+
+// Temporal behavior for the current scaffold.
+fact traces {
+  init
+  always (
+    stutter
+    or some n: Node | timeout[n]
+  )
+}
+
+run timeoutTrace {
   some Node
+  #Term >= 2
+  eventually some Candidate
 } for 3 Node, 4 Term, 6 Message
 
 check RolePartition for 3 Node, 4 Term, 6 Message
