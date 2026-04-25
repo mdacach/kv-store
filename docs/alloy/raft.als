@@ -340,6 +340,29 @@ assert LeadersRequireMajority {
       after hasMajority[n.votesGranted]
 }
 
+// Safety: becoming leader does not also change the node's current term.
+assert LeadersKeepTheirElectionTerm {
+  always all n: Node |
+    becomeLeader[n] implies n.currentTerm' = n.currentTerm
+}
+
+// Safety: a node may only remain leader while its term is unchanged.
+assert LeadersStepDownBeforeTermChange {
+  always all n: Node |
+    (n in Leader and n.currentTerm' != n.currentTerm) implies n not in Leader'
+}
+
+// Safety: handling a higher-term vote request forces the receiver out of
+// candidate/leader state and back to follower.
+assert HigherTermRequestForcesStepDown {
+  always all receiver: Node, request: RequestVoteRequest, response: RequestVoteResponse |
+    (handleRequestVoteRequest[receiver, request, response]
+      and termGt[request.messageTerm, receiver.currentTerm]) implies
+        (receiver in Follower'
+         and receiver not in Candidate'
+         and receiver not in Leader')
+}
+
 // Safety: a node records at most one vote for any term.
 assert OneVotePerNodePerTerm {
   always all n: Node, t: Term | lone n.votedFor[t]
@@ -352,6 +375,9 @@ assert AtMostOneLeaderPerTerm {
 
 check RolePartition for 5 Node, 6 Term, 4 Message
 check LeadersRequireMajority for 5 Node, 6 Term, 4 Message
+check LeadersKeepTheirElectionTerm for 5 Node, 6 Term, 4 Message
+check LeadersStepDownBeforeTermChange for 5 Node, 6 Term, 4 Message
+check HigherTermRequestForcesStepDown for 5 Node, 6 Term, 4 Message
 check OneVotePerNodePerTerm for 5 Node, 6 Term, 4 Message
 check AtMostOneLeaderPerTerm for 5 Node, 6 Term, 4 Message
 
