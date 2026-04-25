@@ -159,6 +159,38 @@ pred sendRequestVoteRequest[candidate, other: Node, request: RequestVoteRequest]
   votesGranted' = votesGranted
 }
 
+// A higher-term RequestVoteRequest forces the receiver to step down and adopt
+// the newer term before the vote is evaluated.
+pred higherTermRequestStepDown[receiver: Node, request: RequestVoteRequest, response: RequestVoteResponse] {
+  termGt[request.messageTerm, receiver.currentTerm]
+
+  Follower' = Follower + receiver
+  Candidate' = Candidate - receiver
+  Leader' = Leader - receiver
+  currentTerm' =
+    (currentTerm - (receiver -> Term)) + (receiver -> request.messageTerm)
+  response.messageTerm = request.messageTerm
+}
+
+// A vote request is granted when it matches the receiver's effective current
+// term and the receiver has not voted for a different node in that term.
+pred grantRequestVote[receiver: Node, request: RequestVoteRequest, response: RequestVoteResponse] {
+  request.messageTerm = receiver.currentTerm'
+  receiver.votedFor[request.messageTerm] in none + request.source
+
+  votedFor' = votedFor + (receiver -> request.messageTerm -> request.source)
+  response.voteGranted = True
+}
+
+// All other RequestVoteRequest cases are denied.
+pred denyRequestVote[receiver: Node, request: RequestVoteRequest, response: RequestVoteResponse] {
+  request.messageTerm != receiver.currentTerm'
+  or receiver.votedFor[request.messageTerm] not in none + request.source
+
+  votedFor' = votedFor
+  response.voteGranted = False
+}
+
 // A server handles a RequestVoteRequest.
 // If the request carries a newer term, the receiver first updates its term and
 // steps down to follower before deciding whether to grant the vote.
@@ -175,15 +207,7 @@ pred handleRequestVoteRequest[receiver: Node, request: RequestVoteRequest, respo
   // newer term before considering the vote. Otherwise its role and term stay as-is.
   (
     // Changed state.
-    // If the request term is higher, we step down from leader or candidate.
-    termGt[request.messageTerm, receiver.currentTerm]
-    and Follower' = Follower + receiver
-    and Candidate' = Candidate - receiver
-    and Leader' = Leader - receiver
-    // And update our current term.
-    and currentTerm' =
-      (currentTerm - (receiver -> Term)) + (receiver -> request.messageTerm)
-    and response.messageTerm = request.messageTerm
+    higherTermRequestStepDown[receiver, request, response]
   ) or (
     // Unchanged state.
     not termGt[request.messageTerm, receiver.currentTerm]
@@ -201,19 +225,10 @@ pred handleRequestVoteRequest[receiver: Node, request: RequestVoteRequest, respo
   //    this same candidate.
   (
     // Changed state.
-    request.messageTerm = receiver.currentTerm'
-    and receiver.votedFor[request.messageTerm] in none + request.source
-    // Record the vote by adding one mapping for (receiver, term) -> candidate.
-    and votedFor' = votedFor + (receiver -> request.messageTerm -> request.source)
-    and response.voteGranted = True
+    grantRequestVote[receiver, request, response]
   ) or (
-    (
-      request.messageTerm != receiver.currentTerm'
-      or receiver.votedFor[request.messageTerm] not in none + request.source
-    )
     // Unchanged state.
-    and votedFor' = votedFor
-    and response.voteGranted = False
+    denyRequestVote[receiver, request, response]
   )
 
   // Changed state.
