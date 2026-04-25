@@ -111,10 +111,10 @@ pred timeout[n: Node] {
   n in Follower + Candidate
   n.currentTerm != termOrd/last
 
+  // Changed state.
   // Timing out moves the node into candidate state for the next term.
   Follower' = Follower - n
   Candidate' = Candidate + n
-  Leader' = Leader
 
   // Only the timing-out node's term changes.
   currentTerm' =
@@ -128,6 +128,9 @@ pred timeout[n: Node] {
     votedFor + (n -> n.currentTerm.(termOrd/next) -> n)
   votesGranted' =
     (votesGranted - (n -> Node)) + (n -> n)
+
+  // Unchanged state.
+  Leader' = Leader
   // Timeouts do not directly change the network. Vote requests will come
   // as part of another transition.
   InFlight' = InFlight
@@ -143,9 +146,11 @@ pred sendRequestVoteRequest[candidate, other: Node, request: RequestVoteRequest]
   request.dest = other
   request.messageTerm = candidate.currentTerm
 
+  // Changed state.
   // The new message becomes in-flight.
   InFlight' = InFlight + request
 
+  // Unchanged state.
   Follower' = Follower
   Candidate' = Candidate
   Leader' = Leader
@@ -164,12 +169,12 @@ pred handleRequestVoteRequest[receiver: Node, request: RequestVoteRequest, respo
 
   response.source = receiver
   response.dest = request.source
-  votesGranted' = votesGranted
 
   // First decide what happens to the receiver's local role/term state.
   // If the request has a newer term, the receiver must step down and adopt that
   // newer term before considering the vote. Otherwise its role and term stay as-is.
   (
+    // Changed state.
     // If the request term is higher, we step down from leader or candidate.
     termGt[request.messageTerm, receiver.currentTerm]
     and Follower' = Follower + receiver
@@ -180,7 +185,7 @@ pred handleRequestVoteRequest[receiver: Node, request: RequestVoteRequest, respo
       (currentTerm - (receiver -> Term)) + (receiver -> request.messageTerm)
     and response.messageTerm = request.messageTerm
   ) or (
-    // Otherwise, nothing changes.
+    // Unchanged state.
     not termGt[request.messageTerm, receiver.currentTerm]
     and Follower' = Follower
     and Candidate' = Candidate
@@ -195,6 +200,7 @@ pred handleRequestVoteRequest[receiver: Node, request: RequestVoteRequest, respo
   // 2. the receiver has either not voted in that term or already voted for
   //    this same candidate.
   (
+    // Changed state.
     request.messageTerm = receiver.currentTerm'
     and receiver.votedFor[request.messageTerm] in none + request.source
     // Record the vote by adding one mapping for (receiver, term) -> candidate.
@@ -205,12 +211,17 @@ pred handleRequestVoteRequest[receiver: Node, request: RequestVoteRequest, respo
       request.messageTerm != receiver.currentTerm'
       or receiver.votedFor[request.messageTerm] not in none + request.source
     )
+    // Unchanged state.
     and votedFor' = votedFor
     and response.voteGranted = False
   )
 
+  // Changed state.
   // Handling a request consumes the request message and creates the response.
   InFlight' = (InFlight - request) + response
+
+  // Unchanged state.
+  votesGranted' = votesGranted
 }
 
 // A candidate receives a vote response for its current term.
@@ -220,12 +231,7 @@ pred handleRequestVoteResponse[candidate: Node, response: RequestVoteResponse] {
   response.dest = candidate
   response.messageTerm = candidate.currentTerm
 
-  Follower' = Follower
-  Candidate' = Candidate
-  Leader' = Leader
-  currentTerm' = currentTerm
-  votedFor' = votedFor
-
+  // Changed state.
   // A granted response adds the responder to the candidate's granted-vote set.
   // The relational update removes the candidate's old vote set and replaces it
   // with the old set plus this responder.
@@ -240,6 +246,13 @@ pred handleRequestVoteResponse[candidate: Node, response: RequestVoteResponse] {
 
   // Processing the response consumes it from the network.
   InFlight' = InFlight - response
+
+  // Unchanged state.
+  Follower' = Follower
+  Candidate' = Candidate
+  Leader' = Leader
+  currentTerm' = currentTerm
+  votedFor' = votedFor
 }
 
 // A candidate with a quorum of granted votes becomes leader.
@@ -247,9 +260,12 @@ pred becomeLeader[candidate: Node] {
   candidate in Candidate
   hasMajority[candidate.votesGranted]
 
-  Follower' = Follower
+  // Changed state.
   Candidate' = Candidate - candidate
   Leader' = Leader + candidate
+
+  // Unchanged state.
+  Follower' = Follower
   currentTerm' = currentTerm
   votedFor' = votedFor
   votesGranted' = votesGranted
@@ -258,6 +274,7 @@ pred becomeLeader[candidate: Node] {
 
 // A no-op transition to allow for lasso traces.
 pred stutter {
+  // No state changes.
   Follower' = Follower
   Candidate' = Candidate
   Leader' = Leader
