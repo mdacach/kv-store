@@ -52,8 +52,22 @@ fact rolePartition {
   }
 }
 
-// Placeholder initial-state predicate.
-pred init {}
+// Initial state for the leader-election model.
+pred init {
+  // All nodes begin as followers.
+  Follower = Node
+  no Candidate
+  no Leader
+
+  // All nodes start in the first term.
+  currentTerm = Node -> termOrd/first
+
+  // No node has voted yet.
+  no votedFor
+
+  // No messages are in flight initially.
+  no InFlight
+}
 
 // Placeholder temporal model.
 fact traces {
