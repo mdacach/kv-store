@@ -52,6 +52,20 @@ assert RolePartition {
   }
 }
 
+// Messages used in a transition must be outside the network before that step.
+pred fresh[m: Message] {
+  m not in InFlight
+}
+
+// Helper predicates for comparing finite ordered terms.
+pred termGt[t1, t2: Term] {
+  t1 in t2.^(termOrd/next)
+}
+
+pred termGte[t1, t2: Term] {
+  t1 = t2 or termGt[t1, t2]
+}
+
 // Initial state for the leader-election model.
 pred init {
   // All nodes begin as followers.
