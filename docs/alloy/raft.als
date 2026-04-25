@@ -267,6 +267,62 @@ pred stutter {
   InFlight' = InFlight
 }
 
+// Temporal behavior for the current scaffold.
+fact traces {
+  init
+  always (
+    stutter
+    or some n: Node | timeout[n]
+    or some candidate, other: Node, request: RequestVoteRequest |
+      sendRequestVoteRequest[candidate, other, request]
+    or some receiver: Node, request: RequestVoteRequest, response: RequestVoteResponse |
+      handleRequestVoteRequest[receiver, request, response]
+    or some candidate: Node, response: RequestVoteResponse |
+      handleRequestVoteResponse[candidate, response]
+    or some candidate: Node | becomeLeader[candidate]
+  )
+}
+
+run voteExchangeTrace {
+  #Node = 5
+  #Term >= 2
+  eventually some RequestVoteRequest & InFlight
+  eventually some RequestVoteResponse & InFlight
+  eventually some votesGranted
+} for 5 Node, 6 Term, 4 Message
+
+// With 5 nodes, a candidate already has its self-vote, so it needs 2 more
+// votes to reach a majority of 3. Because message fields are immutable, each
+// remote vote needs its own RequestVoteRequest atom and its own
+// RequestVoteResponse atom, so 4 Message atoms are enough for this scope.
+run leaderTrace {
+  #Node = 5
+  #Term >= 2
+  eventually some Leader
+} for 5 Node, 6 Term, 4 Message
+
+// Safety: any newly elected leader must already have a quorum of granted votes.
+assert LeadersRequireMajority {
+  always all n: Node |
+    (n not in Leader and after n in Leader) implies
+      after hasMajority[n.votesGranted]
+}
+
+// Safety: a node records at most one vote for any term.
+assert OneVotePerNodePerTerm {
+  always all n: Node, t: Term | lone n.votedFor[t]
+}
+
+// Safety: there is never more than one leader in the same term.
+assert AtMostOneLeaderPerTerm {
+  always all t: Term | lone { n: Leader | n.currentTerm = t }
+}
+
+check RolePartition for 5 Node, 6 Term, 4 Message
+check LeadersRequireMajority for 5 Node, 6 Term, 4 Message
+check OneVotePerNodePerTerm for 5 Node, 6 Term, 4 Message
+check AtMostOneLeaderPerTerm for 5 Node, 6 Term, 4 Message
+
 // Visualization helpers.
 //
 // These functions are parameterless on purpose so the Alloy visualizer exposes
