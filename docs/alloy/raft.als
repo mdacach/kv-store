@@ -7,6 +7,10 @@ sig Node {
   // Persistent voting history for each term.
   var votedFor: Term -> lone Node,
   // Servers from which this node has received a granted vote in its current term.
+  //
+  // In the current model this set is only meaningful while the node is a
+  // candidate. Outside candidate state it may contain stale bookkeeping left
+  // over from an earlier election, but no transition consults it there.
   var votesGranted: set Node
 }
 
@@ -79,6 +83,11 @@ pred termGte[t1, t2: Term] {
   t1 = t2 or termGt[t1, t2]
 }
 
+// A set of votes is a quorum when it is a strict majority of the cluster.
+pred hasMajority[votes: set Node] {
+  gt[#votes, div[#Node, 2]]
+}
+
 // Initial state for the leader-election model.
 pred init {
   // All nodes begin as followers.
@@ -113,9 +122,12 @@ pred timeout[n: Node] {
     (currentTerm - (n -> Term)) + (n -> n.currentTerm.(termOrd/next))
 
   // Timing out starts a fresh election for this node, so any old response
-  // bookkeeping for that node is cleared.
-  votedFor' = votedFor
-  votesGranted' = votesGranted - (n -> Node)
+  // bookkeeping for that node is reset, and the node immediately records its
+  // own vote for the new term.
+  votedFor' =
+    votedFor + (n -> n.currentTerm.(termOrd/next) -> n)
+  votesGranted' =
+    (votesGranted - (n -> Node)) + (n -> n)
   // Timeouts do not directly change the network. Vote requests will come
   // as part of another transition.
   InFlight' = InFlight
@@ -230,6 +242,20 @@ pred handleRequestVoteResponse[candidate: Node, response: RequestVoteResponse] {
   InFlight' = InFlight - response
 }
 
+// A candidate with a quorum of granted votes becomes leader.
+pred becomeLeader[candidate: Node] {
+  candidate in Candidate
+  hasMajority[candidate.votesGranted]
+
+  Follower' = Follower
+  Candidate' = Candidate - candidate
+  Leader' = Leader + candidate
+  currentTerm' = currentTerm
+  votedFor' = votedFor
+  votesGranted' = votesGranted
+  InFlight' = InFlight
+}
+
 // A no-op transition to allow for lasso traces.
 pred stutter {
   Follower' = Follower
@@ -326,6 +352,7 @@ fact traces {
       handleRequestVoteRequest[receiver, request, response]
     or some candidate: Node, response: RequestVoteResponse |
       handleRequestVoteResponse[candidate, response]
+    or some candidate: Node | becomeLeader[candidate]
   )
 }
 
