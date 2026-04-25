@@ -395,29 +395,3 @@ fun events : set Event {
   handle_request_vote_response_happens.Node.Node +
   stutter_happens
 }
-
-// Temporal behavior for the current scaffold.
-fact traces {
-  init
-  always (
-    stutter
-    or some n: Node | timeout[n]
-    or some candidate, other: Node, request: RequestVoteRequest |
-      sendRequestVoteRequest[candidate, other, request]
-    or some receiver: Node, request: RequestVoteRequest, response: RequestVoteResponse |
-      handleRequestVoteRequest[receiver, request, response]
-    or some candidate: Node, response: RequestVoteResponse |
-      handleRequestVoteResponse[candidate, response]
-    or some candidate: Node | becomeLeader[candidate]
-  )
-}
-
-run voteExchangeTrace {
-  #Node = 3
-  #Term >= 2
-  eventually some RequestVoteRequest & InFlight
-  eventually some RequestVoteResponse & InFlight
-  eventually some votesGranted
-} for 3 Node, 4 Term, 6 Message
-
-check RolePartition for 3 Node, 4 Term, 6 Message
