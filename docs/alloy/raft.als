@@ -359,9 +359,10 @@ assert HigherTermRequestForcesStepDown {
          and receiver not in Leader')
 }
 
-// Safety: a node records at most one vote for any term.
+// Safety: once a node records a vote for a term, that vote never changes.
 assert OneVotePerNodePerTerm {
-  always all n: Node, t: Term | lone n.votedFor[t]
+  always all n: Node, t: Term |
+    some n.votedFor[t] implies n.votedFor'[t] = n.votedFor[t]
 }
 
 // Safety: there is never more than one leader in the same term.
