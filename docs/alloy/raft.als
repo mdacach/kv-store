@@ -24,7 +24,9 @@ sig Node {
   // the next position is outside the bounded Index scope.
   var nextIndex: Node -> lone Index,
   // For leaders, the highest log index each peer has acknowledged.
-  var matchIndex: Node -> lone Index
+  var matchIndex: Node -> lone Index,
+  // Highest log index known to be committed on this node.
+  var commitIndex: lone Index
 }
 
 // Terms are finite and ordered in the model, even though Raft terms are
@@ -210,6 +212,7 @@ pred init {
   // Leader replication bookkeeping starts in its default empty-log state.
   nextIndex = Node -> Node -> indexOrd/first
   no matchIndex
+  no commitIndex
 }
 
 // A follower or candidate times out and starts a new election in the next term.
@@ -247,6 +250,7 @@ pred timeout[n: Node] {
   // as part of another transition.
   InFlight' = InFlight
   log' = log
+  commitIndex' = commitIndex
 }
 
 // A candidate sends a RequestVoteRequest to one peer.
@@ -277,6 +281,7 @@ pred sendRequestVoteRequest[candidate, other: Node, request: RequestVoteRequest]
   log' = log
   nextIndex' = nextIndex
   matchIndex' = matchIndex
+  commitIndex' = commitIndex
 }
 
 // A higher-term RPC forces the receiver to step down and adopt the newer term.
@@ -362,6 +367,7 @@ pred handleRequestVoteRequest[receiver: Node, request: RequestVoteRequest, respo
   log' = log
   nextIndex' = nextIndex
   matchIndex' = matchIndex
+  commitIndex' = commitIndex
 }
 
 // A candidate receives a vote response for its current term.
@@ -398,6 +404,7 @@ pred handleRequestVoteResponse[candidate: Node, response: RequestVoteResponse] {
   log' = log
   nextIndex' = nextIndex
   matchIndex' = matchIndex
+  commitIndex' = commitIndex
 }
 
 // A stale response can be discarded without changing local protocol state.
@@ -421,6 +428,7 @@ pred dropStaleResponse[receiver: Node, response: Message] {
   log' = log
   nextIndex' = nextIndex
   matchIndex' = matchIndex
+  commitIndex' = commitIndex
 }
 
 // A candidate with a quorum of granted votes becomes leader.
@@ -444,6 +452,7 @@ pred becomeLeader[candidate: Node] {
     (nextIndex - (candidate -> Node -> Index)) + (candidate -> Node -> firstFreeLogIndex[candidate])
   matchIndex' =
     matchIndex - (candidate -> Node -> Index)
+  commitIndex' = commitIndex
 }
 
 // A leader receives a client command and appends it to its local log.
@@ -467,6 +476,7 @@ pred clientAppend[leader: Node, entry: Entry] {
   InFlight' = InFlight
   nextIndex' = nextIndex
   matchIndex' = matchIndex
+  commitIndex' = commitIndex
 }
 
 // A leader sends AppendEntries to one peer. The request carries the previous log
@@ -500,6 +510,7 @@ pred sendAppendEntriesRequest[leader, other: Node, request: AppendEntriesRequest
   log' = log
   nextIndex' = nextIndex
   matchIndex' = matchIndex
+  commitIndex' = commitIndex
 }
 
 // A server handles AppendEntries by validating the previous-log metadata,
@@ -590,6 +601,7 @@ pred handleAppendEntriesRequest[receiver: Node, request: AppendEntriesRequest, r
   votesResponded' = votesResponded
   nextIndex' = nextIndex
   matchIndex' = matchIndex
+  commitIndex' = commitIndex
 }
 
 // A leader handles AppendEntries responses by updating its view of follower
@@ -641,6 +653,7 @@ pred handleAppendEntriesResponse[leader: Node, response: AppendEntriesResponse] 
   votesGranted' = votesGranted
   votesResponded' = votesResponded
   log' = log
+  commitIndex' = commitIndex
 }
 
 // A no-op transition to allow for lasso traces.
@@ -657,6 +670,7 @@ pred stutter {
   log' = log
   nextIndex' = nextIndex
   matchIndex' = matchIndex
+  commitIndex' = commitIndex
 }
 
 // Temporal behavior for the current scaffold.
