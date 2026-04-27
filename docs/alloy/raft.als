@@ -259,17 +259,15 @@ pred sendRequestVoteRequest[candidate, other: Node, request: RequestVoteRequest]
   matchIndex' = matchIndex
 }
 
-// A higher-term RequestVoteRequest forces the receiver to step down and adopt
-// the newer term before the vote is evaluated.
-pred higherTermRequestStepDown[receiver: Node, request: RequestVoteRequest, response: RequestVoteResponse] {
-  termGt[request.messageTerm, receiver.currentTerm]
+// A higher-term RPC forces the receiver to step down and adopt the newer term.
+pred higherTermStepDown[receiver: Node, message: Message] {
+  termGt[message.messageTerm, receiver.currentTerm]
 
   Follower' = Follower + receiver
   Candidate' = Candidate - receiver
   Leader' = Leader - receiver
   currentTerm' =
-    (currentTerm - (receiver -> Term)) + (receiver -> request.messageTerm)
-  response.messageTerm = request.messageTerm
+    (currentTerm - (receiver -> Term)) + (receiver -> message.messageTerm)
 }
 
 // A vote request is granted when it matches the receiver's effective current
@@ -309,7 +307,8 @@ pred handleRequestVoteRequest[receiver: Node, request: RequestVoteRequest, respo
   // newer term before considering the vote. Otherwise its role and term stay as-is.
   (
     // Changed state.
-    higherTermRequestStepDown[receiver, request, response]
+    higherTermStepDown[receiver, request]
+    and response.messageTerm = request.messageTerm
   ) or (
     // Unchanged state.
     not termGt[request.messageTerm, receiver.currentTerm]
@@ -376,6 +375,29 @@ pred handleRequestVoteResponse[candidate: Node, response: RequestVoteResponse] {
   Leader' = Leader
   currentTerm' = currentTerm
   votedFor' = votedFor
+  log' = log
+  nextIndex' = nextIndex
+  matchIndex' = matchIndex
+}
+
+// A stale response can be discarded without changing local protocol state.
+pred dropStaleResponse[receiver: Node, response: Message] {
+  response in InFlight
+  response.dest = receiver
+  response in RequestVoteResponse + AppendEntriesResponse
+  termGt[receiver.currentTerm, response.messageTerm]
+
+  // Changed state.
+  InFlight' = InFlight - response
+
+  // Unchanged state.
+  Follower' = Follower
+  Candidate' = Candidate
+  Leader' = Leader
+  currentTerm' = currentTerm
+  votedFor' = votedFor
+  votesGranted' = votesGranted
+  votesResponded' = votesResponded
   log' = log
   nextIndex' = nextIndex
   matchIndex' = matchIndex
@@ -488,6 +510,8 @@ fact traces {
       handleRequestVoteRequest[receiver, request, response]
     or some candidate: Node, response: RequestVoteResponse |
       handleRequestVoteResponse[candidate, response]
+    or some receiver: Node, response: Message |
+      dropStaleResponse[receiver, response]
     or some candidate: Node | becomeLeader[candidate]
     or some leader: Node, entry: Entry | clientAppend[leader, entry]
     or some leader, other: Node, request: AppendEntriesRequest |

@@ -29,8 +29,8 @@ assert LeadersStepDownBeforeTermChange {
     (n in Leader and n.currentTerm' != n.currentTerm) implies n not in Leader'
 }
 
-// Safety: handling a higher-term vote request forces the receiver out of
-// candidate/leader state and back to follower.
+// Safety: handling a higher-term vote request uses the generic step-down path
+// and forces the receiver out of candidate/leader state and back to follower.
 assert HigherTermRequestForcesStepDown {
   always all receiver: Node, request: RequestVoteRequest, response: RequestVoteResponse |
     (handleRequestVoteRequest[receiver, request, response]
@@ -38,6 +38,24 @@ assert HigherTermRequestForcesStepDown {
         (receiver in Follower'
          and receiver not in Candidate'
          and receiver not in Leader')
+}
+
+// Safety: dropping a stale response only consumes that response from the
+// network.
+assert DropStaleResponseOnlyConsumesNetwork {
+  always all receiver: Node, response: Message |
+    dropStaleResponse[receiver, response] implies {
+      Follower' = Follower
+      Candidate' = Candidate
+      Leader' = Leader
+      currentTerm' = currentTerm
+      votedFor' = votedFor
+      votesGranted' = votesGranted
+      votesResponded' = votesResponded
+      log' = log
+      nextIndex' = nextIndex
+      matchIndex' = matchIndex
+    }
 }
 
 // Safety: once a node records a vote for a term, that vote never changes.
@@ -110,6 +128,7 @@ check LeadersRequireMajority for 5 Node, 6 Term, 4 Message
 check LeadersKeepTheirElectionTerm for 5 Node, 6 Term, 4 Message
 check LeadersStepDownBeforeTermChange for 5 Node, 6 Term, 4 Message
 check HigherTermRequestForcesStepDown for 5 Node, 6 Term, 4 Message
+check DropStaleResponseOnlyConsumesNetwork for 5 Node, 6 Term, 5 Message, 4 Index, 4 Entry, 2 Value
 check OneVotePerNodePerTerm for 5 Node, 6 Term, 4 Message
 check AtMostOneLeaderPerTerm for 5 Node, 6 Term, 4 Message
 check VotesGrantedSubsetVotesResponded for 5 Node, 6 Term, 4 Message
