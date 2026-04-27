@@ -1,0 +1,59 @@
+module safety
+open raft
+
+// Safety property: every node should always be in exactly one Raft role.
+assert RolePartition {
+  always {
+    Node = Follower + Candidate + Leader
+    disj[Follower, Candidate, Leader]
+  }
+}
+
+// Safety: any newly elected leader must already have a quorum of granted votes.
+assert LeadersRequireMajority {
+  always all n: Node |
+    (n not in Leader and after n in Leader) implies
+      after hasMajority[n.votesGranted]
+}
+
+// Safety: becoming leader does not also change the node's current term.
+assert LeadersKeepTheirElectionTerm {
+  always all n: Node |
+    (n not in Leader and n in Leader') implies n.currentTerm' = n.currentTerm
+}
+
+// Safety: a node may only remain leader while its term is unchanged.
+assert LeadersStepDownBeforeTermChange {
+  always all n: Node |
+    (n in Leader and n.currentTerm' != n.currentTerm) implies n not in Leader'
+}
+
+// Safety: handling a higher-term vote request forces the receiver out of
+// candidate/leader state and back to follower.
+assert HigherTermRequestForcesStepDown {
+  always all receiver: Node, request: RequestVoteRequest, response: RequestVoteResponse |
+    (handleRequestVoteRequest[receiver, request, response]
+      and termGt[request.messageTerm, receiver.currentTerm]) implies
+        (receiver in Follower'
+         and receiver not in Candidate'
+         and receiver not in Leader')
+}
+
+// Safety: once a node records a vote for a term, that vote never changes.
+assert OneVotePerNodePerTerm {
+  always all n: Node, t: Term |
+    some n.votedFor[t] implies n.votedFor'[t] = n.votedFor[t]
+}
+
+// Safety: there is never more than one leader in the same term.
+assert AtMostOneLeaderPerTerm {
+  always all t: Term | lone { n: Leader | n.currentTerm = t }
+}
+
+check RolePartition for 5 Node, 6 Term, 4 Message
+check LeadersRequireMajority for 5 Node, 6 Term, 4 Message
+check LeadersKeepTheirElectionTerm for 5 Node, 6 Term, 4 Message
+check LeadersStepDownBeforeTermChange for 5 Node, 6 Term, 4 Message
+check HigherTermRequestForcesStepDown for 5 Node, 6 Term, 4 Message
+check OneVotePerNodePerTerm for 5 Node, 6 Term, 4 Message
+check AtMostOneLeaderPerTerm for 5 Node, 6 Term, 4 Message
