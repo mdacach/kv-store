@@ -55,6 +55,7 @@ assert DropStaleResponseOnlyConsumesNetwork {
       log' = log
       nextIndex' = nextIndex
       matchIndex' = matchIndex
+      commitIndex' = commitIndex
     }
 }
 
