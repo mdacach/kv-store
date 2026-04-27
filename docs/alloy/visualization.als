@@ -9,6 +9,14 @@ enum Event {
   SendRequestVoteRequestEvent,
   HandleRequestVoteRequestEvent,
   HandleRequestVoteResponseEvent,
+  DropStaleResponseEvent,
+  DropMessageEvent,
+  DuplicateMessageEvent,
+  ClientAppendEvent,
+  SendAppendEntriesRequestEvent,
+  HandleAppendEntriesRequestEvent,
+  HandleAppendEntriesResponseEvent,
+  AdvanceCommitIndexEvent,
   StutterEvent
 }
 
@@ -42,6 +50,14 @@ fun inFlightDeniedResponseEdges : Node -> Node {
   }
 }
 
+// Direct network edges for in-flight AppendEntries requests.
+fun inFlightAppendEntriesRequestEdges : Node -> Node {
+  { s, d : Node |
+    some req : AppendEntriesRequest & InFlight |
+      req.source = s and req.dest = d
+  }
+}
+
 // The current votes a candidate has accumulated.
 fun grantedVoteEdges : Node -> Node {
   votesGranted
@@ -72,6 +88,56 @@ fun handle_request_vote_response_happens : Event -> Node -> Node {
   }
 }
 
+fun drop_stale_response_happens : Event -> Node {
+  { e : DropStaleResponseEvent, n : Node |
+    some resp : Message | dropStaleResponse[n, resp]
+  }
+}
+
+fun drop_message_happens : set Event {
+  { e : DropMessageEvent |
+    some message : Message | dropMessage[message]
+  }
+}
+
+fun duplicate_message_happens : set Event {
+  { e : DuplicateMessageEvent |
+    some message, duplicate : Message | duplicateMessage[message, duplicate]
+  }
+}
+
+fun client_append_happens : Event -> Node {
+  { e : ClientAppendEvent, n : Node |
+    some entry : Entry | clientAppend[n, entry]
+  }
+}
+
+fun send_append_entries_request_happens : Event -> Node -> Node {
+  { e : SendAppendEntriesRequestEvent, l, o : Node |
+    some req : AppendEntriesRequest | sendAppendEntriesRequest[l, o, req]
+  }
+}
+
+fun handle_append_entries_request_happens : Event -> Node -> Node {
+  { e : HandleAppendEntriesRequestEvent, r, s : Node |
+    some req : AppendEntriesRequest, resp : AppendEntriesResponse |
+      req.source = s and handleAppendEntriesRequest[r, req, resp]
+  }
+}
+
+fun handle_append_entries_response_happens : Event -> Node -> Node {
+  { e : HandleAppendEntriesResponseEvent, l, s : Node |
+    some resp : AppendEntriesResponse |
+      resp.source = s and handleAppendEntriesResponse[l, resp]
+  }
+}
+
+fun advance_commit_index_happens : Event -> Node {
+  { e : AdvanceCommitIndexEvent, n : Node |
+    some i : Index | advanceCommitIndex[n, i]
+  }
+}
+
 fun stutter_happens : set Event {
   { e : StutterEvent | stutter }
 }
@@ -82,5 +148,13 @@ fun events : set Event {
   send_request_vote_request_happens.Node.Node +
   handle_request_vote_request_happens.Node.Node +
   handle_request_vote_response_happens.Node.Node +
+  drop_stale_response_happens.Node +
+  drop_message_happens +
+  duplicate_message_happens +
+  client_append_happens.Node +
+  send_append_entries_request_happens.Node.Node +
+  handle_append_entries_request_happens.Node.Node +
+  handle_append_entries_response_happens.Node.Node +
+  advance_commit_index_happens.Node +
   stutter_happens
 }
