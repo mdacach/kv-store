@@ -230,6 +230,11 @@ pred quorumAgreesThrough[leader: Node, index: Index] {
   ]
 }
 
+pred committedThrough[n: Node, i: Index] {
+  some n.commitIndex
+  and indexGte[n.commitIndex, i]
+}
+
 // Initial state for the leader-election model.
 pred init {
   // All nodes begin as followers.

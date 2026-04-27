@@ -109,6 +109,42 @@ assert LeaderAppendOnly {
       i.(n.log') = i.(n.log)
 }
 
+// Safety: if two logs contain entries with the same index and term, then the
+// entries at that index and all preceding entries are identical.
+assert LogMatching {
+  always all n1, n2: Node, i: Index |
+    (
+      some logEntry[n1, i]
+      and logEntry[n1, i].entryTerm = logEntry[n2, i].entryTerm
+    ) implies {
+      logEntry[n1, i] = logEntry[n2, i]
+      all earlier: Index |
+        i in earlier.^(indexOrd/next) implies
+          logEntry[n1, earlier] = logEntry[n2, earlier]
+    }
+}
+
+// Safety: leaders in later terms contain entries committed in earlier terms.
+assert LeaderCompleteness {
+  always all leader: Leader, n: Node, i: Index |
+    (
+      committedThrough[n, i]
+      and some logEntry[n, i]
+      and termGt[leader.currentTerm, logEntry[n, i].entryTerm]
+    ) implies
+      logEntry[leader, i] = logEntry[n, i]
+}
+
+// Safety: no two nodes can have different committed entries at the same index.
+assert CommittedEntryAgreement {
+  always all n1, n2: Node, i: Index |
+    (
+      committedThrough[n1, i]
+      and committedThrough[n2, i]
+    ) implies
+      logEntry[n1, i] = logEntry[n2, i]
+}
+
 // Safety: every in-flight AppendEntries request carries previous-log metadata
 // that agrees with its source log.
 assert AppendEntriesPrevLogMatchesSource {
@@ -165,6 +201,9 @@ check CommitIndexWithinLog for 5 Node, 6 Term, 5 Message, 4 Index, 4 Entry, 2 Va
 check CommitIndexMonotonic for 5 Node, 6 Term, 5 Message, 4 Index, 4 Entry, 2 Value
 check FailedAppendEntriesKeepsNextIndexInScope for 5 Node, 6 Term, 5 Message, 4 Index, 4 Entry, 2 Value
 check LeaderAppendOnly for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value
+check LogMatching for 5 Node, 6 Term, 5 Message, 4 Index, 4 Entry, 2 Value
+check LeaderCompleteness for 5 Node, 6 Term, 5 Message, 4 Index, 4 Entry, 2 Value
+check CommittedEntryAgreement for 5 Node, 6 Term, 5 Message, 4 Index, 4 Entry, 2 Value
 check AppendEntriesPrevLogMatchesSource for 5 Node, 6 Term, 5 Message, 4 Index, 4 Entry, 2 Value
 check SuccessfulAppendEntriesRequiresPrevLogMatch for 5 Node, 6 Term, 5 Message, 4 Index, 4 Entry, 2 Value
 check GrantedVotesRequireUpToDateLog for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value
