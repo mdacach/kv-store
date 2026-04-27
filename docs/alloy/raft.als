@@ -132,7 +132,7 @@ pred timeout[n: Node] {
   InFlight' = InFlight
 }
 
-// A candidate sends a RequestVoteRequest to a server that has not yet responded.
+// A candidate sends a RequestVoteRequest to one peer.
 pred sendRequestVoteRequest[candidate, other: Node, request: RequestVoteRequest] {
   candidate in Candidate
   other != candidate
