@@ -19,7 +19,12 @@ sig Node {
   // is also recorded here at the start of an election.
   var votesResponded: set Node,
   // Persistent log entries keyed by bounded log index.
-  var log: Index -> lone Entry
+  var log: Index -> lone Entry,
+  // For leaders, the next log index to send to each peer. A missing index means
+  // the next position is outside the bounded Index scope.
+  var nextIndex: Node -> lone Index,
+  // For leaders, the highest log index each peer has acknowledged.
+  var matchIndex: Node -> lone Index
 }
 
 // Terms are finite and ordered in the model, even though Raft terms are
@@ -113,6 +118,15 @@ fun lastLogTerm[n: Node] : lone Term {
   lastLogIndex[n].(n.log).entryTerm
 }
 
+// First unoccupied log index after a node's contiguous log prefix, if one is
+// representable in the bounded Index scope.
+fun firstFreeLogIndex[n: Node] : lone Index {
+  { i : Index |
+    i not in logIndexes[n]
+    and (i = indexOrd/first or i.(indexOrd/prev) in logIndexes[n])
+  }
+}
+
 // Raft's log freshness rule for RequestVote. A candidate is at least as
 // up-to-date as the receiver when its last log term is newer, or when terms are
 // equal and its last log index is at least as large.
@@ -151,6 +165,10 @@ pred init {
 
   // Logs start empty.
   no log
+
+  // Leader replication bookkeeping starts in its default empty-log state.
+  nextIndex = Node -> Node -> indexOrd/first
+  no matchIndex
 }
 
 // A follower or candidate times out and starts a new election in the next term.
@@ -177,6 +195,10 @@ pred timeout[n: Node] {
     (votesGranted - (n -> Node)) + (n -> n)
   votesResponded' =
     (votesResponded - (n -> Node)) + (n -> n)
+  nextIndex' =
+    (nextIndex - (n -> Node -> Index)) + (n -> Node -> indexOrd/first)
+  matchIndex' =
+    matchIndex - (n -> Node -> Index)
 
   // Unchanged state.
   Leader' = Leader
@@ -212,6 +234,8 @@ pred sendRequestVoteRequest[candidate, other: Node, request: RequestVoteRequest]
   votesGranted' = votesGranted
   votesResponded' = votesResponded
   log' = log
+  nextIndex' = nextIndex
+  matchIndex' = matchIndex
 }
 
 // A higher-term RequestVoteRequest forces the receiver to step down and adopt
@@ -296,6 +320,8 @@ pred handleRequestVoteRequest[receiver: Node, request: RequestVoteRequest, respo
   votesGranted' = votesGranted
   votesResponded' = votesResponded
   log' = log
+  nextIndex' = nextIndex
+  matchIndex' = matchIndex
 }
 
 // A candidate receives a vote response for its current term.
@@ -330,6 +356,8 @@ pred handleRequestVoteResponse[candidate: Node, response: RequestVoteResponse] {
   currentTerm' = currentTerm
   votedFor' = votedFor
   log' = log
+  nextIndex' = nextIndex
+  matchIndex' = matchIndex
 }
 
 // A candidate with a quorum of granted votes becomes leader.
@@ -349,6 +377,10 @@ pred becomeLeader[candidate: Node] {
   votesResponded' = votesResponded
   InFlight' = InFlight
   log' = log
+  nextIndex' =
+    (nextIndex - (candidate -> Node -> Index)) + (candidate -> Node -> firstFreeLogIndex[candidate])
+  matchIndex' =
+    matchIndex - (candidate -> Node -> Index)
 }
 
 // A no-op transition to allow for lasso traces.
@@ -363,6 +395,8 @@ pred stutter {
   votesResponded' = votesResponded
   InFlight' = InFlight
   log' = log
+  nextIndex' = nextIndex
+  matchIndex' = matchIndex
 }
 
 // Temporal behavior for the current scaffold.
