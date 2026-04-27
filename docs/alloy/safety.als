@@ -51,6 +51,15 @@ assert AtMostOneLeaderPerTerm {
   always all t: Term | lone { n: Leader | n.currentTerm = t }
 }
 
+// Safety: any granted vote is only granted to a candidate whose log metadata is
+// at least as up-to-date as the receiver's log.
+assert GrantedVotesRequireUpToDateLog {
+  always all receiver: Node, request: RequestVoteRequest, response: RequestVoteResponse |
+    (handleRequestVoteRequest[receiver, request, response]
+      and response.voteGranted = True) implies
+        logUpToDate[request.requestLastLogIndex, request.requestLastLogTerm, receiver]
+}
+
 // Safety: each node has at most one log entry at each log index.
 assert OneEntryPerNodeIndex {
   always all n: Node, i: Index | lone logEntry[n, i]
@@ -69,5 +78,6 @@ check LeadersStepDownBeforeTermChange for 5 Node, 6 Term, 4 Message
 check HigherTermRequestForcesStepDown for 5 Node, 6 Term, 4 Message
 check OneVotePerNodePerTerm for 5 Node, 6 Term, 4 Message
 check AtMostOneLeaderPerTerm for 5 Node, 6 Term, 4 Message
+check GrantedVotesRequireUpToDateLog for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value
 check OneEntryPerNodeIndex for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value
 check LogsAreContiguous for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value
