@@ -339,7 +339,7 @@ assert LeadersRequireMajority {
 // Safety: becoming leader does not also change the node's current term.
 assert LeadersKeepTheirElectionTerm {
   always all n: Node |
-    becomeLeader[n] implies n.currentTerm' = n.currentTerm
+    (n not in Leader and n in Leader') implies n.currentTerm' = n.currentTerm
 }
 
 // Safety: a node may only remain leader while its term is unchanged.
