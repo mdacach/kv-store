@@ -44,3 +44,9 @@ run appendEntriesResponseTrace {
   #Term >= 2
   eventually some n: Node | some n.matchIndex
 } for 3 Node, 4 Term, 4 Message, 3 Index, 3 Entry, 2 Value
+
+run committedEntryTrace {
+  #Node = 3
+  #Term >= 2
+  eventually some n: Node | some n.commitIndex
+} for 3 Node, 4 Term, 4 Message, 3 Index, 3 Entry, 2 Value

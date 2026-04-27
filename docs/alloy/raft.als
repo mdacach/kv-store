@@ -111,6 +111,10 @@ pred indexGte[i1, i2: Index] {
   i1 = i2 or i1 in i2.^(indexOrd/next)
 }
 
+pred indexGt[i1, i2: Index] {
+  i1 in i2.^(indexOrd/next)
+}
+
 // A set of votes is a quorum when it is a strict majority of the cluster.
 pred hasMajority[votes: set Node] {
   gt[#votes, div[#Node, 2]]
@@ -215,6 +219,15 @@ pred followerCommitFromLeader[receiver: Node, request: AppendEntriesRequest] {
     )
   )
   commitDoesNotMoveBackward[receiver]
+}
+
+pred quorumAgreesThrough[leader: Node, index: Index] {
+  hasMajority[
+    leader + { peer : Node |
+      some leader.matchIndex[peer]
+      and indexGte[leader.matchIndex[peer], index]
+    }
+  ]
 }
 
 // Initial state for the leader-election model.
@@ -686,6 +699,33 @@ pred handleAppendEntriesResponse[leader: Node, response: AppendEntriesResponse] 
   commitIndex' = commitIndex
 }
 
+// A leader advances its commit index once a quorum has replicated an entry from
+// the leader's current term.
+pred advanceCommitIndex[leader: Node, newCommitIndex: Index] {
+  leader in Leader
+  newCommitIndex in logIndexes[leader]
+  logEntry[leader, newCommitIndex].entryTerm = leader.currentTerm
+  quorumAgreesThrough[leader, newCommitIndex]
+  no leader.commitIndex or indexGt[newCommitIndex, leader.commitIndex]
+
+  // Changed state.
+  commitIndex' =
+    (commitIndex - (leader -> Index)) + (leader -> newCommitIndex)
+
+  // Unchanged state.
+  Follower' = Follower
+  Candidate' = Candidate
+  Leader' = Leader
+  currentTerm' = currentTerm
+  votedFor' = votedFor
+  votesGranted' = votesGranted
+  votesResponded' = votesResponded
+  InFlight' = InFlight
+  log' = log
+  nextIndex' = nextIndex
+  matchIndex' = matchIndex
+}
+
 // A no-op transition to allow for lasso traces.
 pred stutter {
   // No state changes.
@@ -725,6 +765,8 @@ fact traces {
       handleAppendEntriesRequest[receiver, request, response]
     or some leader: Node, response: AppendEntriesResponse |
       handleAppendEntriesResponse[leader, response]
+    or some leader: Node, newCommitIndex: Index |
+      advanceCommitIndex[leader, newCommitIndex]
   )
 }
 
