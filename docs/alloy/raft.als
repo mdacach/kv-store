@@ -478,6 +478,27 @@ pred dropStaleResponse[receiver: Node, response: Message] {
   commitIndex' = commitIndex
 }
 
+// The network may drop any in-flight message.
+pred dropMessage[message: Message] {
+  message in InFlight
+
+  // Changed state.
+  InFlight' = InFlight - message
+
+  // Unchanged state.
+  Follower' = Follower
+  Candidate' = Candidate
+  Leader' = Leader
+  currentTerm' = currentTerm
+  votedFor' = votedFor
+  votesGranted' = votesGranted
+  votesResponded' = votesResponded
+  log' = log
+  nextIndex' = nextIndex
+  matchIndex' = matchIndex
+  commitIndex' = commitIndex
+}
+
 // A candidate with a quorum of granted votes becomes leader.
 pred becomeLeader[candidate: Node] {
   candidate in Candidate
@@ -762,6 +783,8 @@ fact traces {
       handleRequestVoteResponse[candidate, response]
     or some receiver: Node, response: Message |
       dropStaleResponse[receiver, response]
+    or some message: Message |
+      dropMessage[message]
     or some candidate: Node | becomeLeader[candidate]
     or some leader: Node, entry: Entry | clientAppend[leader, entry]
     or some leader, other: Node, request: AppendEntriesRequest |

@@ -58,6 +58,24 @@ assert DropStaleResponseOnlyConsumesNetwork {
     }
 }
 
+// Safety: dropping a message only removes it from the network.
+assert DropMessageOnlyConsumesNetwork {
+  always all message: Message |
+    dropMessage[message] implies {
+      Follower' = Follower
+      Candidate' = Candidate
+      Leader' = Leader
+      currentTerm' = currentTerm
+      votedFor' = votedFor
+      votesGranted' = votesGranted
+      votesResponded' = votesResponded
+      log' = log
+      nextIndex' = nextIndex
+      matchIndex' = matchIndex
+      commitIndex' = commitIndex
+    }
+}
+
 // Safety: once a node records a vote for a term, that vote never changes.
 assert OneVotePerNodePerTerm {
   always all n: Node, t: Term |
@@ -193,6 +211,7 @@ check LeadersKeepTheirElectionTerm for 5 Node, 6 Term, 4 Message
 check LeadersStepDownBeforeTermChange for 5 Node, 6 Term, 4 Message
 check HigherTermRequestForcesStepDown for 5 Node, 6 Term, 4 Message
 check DropStaleResponseOnlyConsumesNetwork for 5 Node, 6 Term, 5 Message, 4 Index, 4 Entry, 2 Value
+check DropMessageOnlyConsumesNetwork for 5 Node, 6 Term, 5 Message, 4 Index, 4 Entry, 2 Value
 check OneVotePerNodePerTerm for 5 Node, 6 Term, 4 Message
 check AtMostOneLeaderPerTerm for 5 Node, 6 Term, 4 Message
 check VotesGrantedSubsetVotesResponded for 5 Node, 6 Term, 4 Message
