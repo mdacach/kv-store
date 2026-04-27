@@ -79,10 +79,6 @@ pred termGt[t1, t2: Term] {
   t1 in t2.^(termOrd/next)
 }
 
-pred termGte[t1, t2: Term] {
-  t1 = t2 or termGt[t1, t2]
-}
-
 // A set of votes is a quorum when it is a strict majority of the cluster.
 pred hasMajority[votes: set Node] {
   gt[#votes, div[#Node, 2]]
