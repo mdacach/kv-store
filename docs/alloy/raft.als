@@ -188,6 +188,35 @@ pred prevLogMatches[receiver: Node, request: AppendEntriesRequest] {
   )
 }
 
+pred commitDoesNotMoveBackward[n: Node] {
+  no n.commitIndex
+  or (
+    some n.commitIndex'
+    and indexGte[n.commitIndex', n.commitIndex]
+  )
+}
+
+pred followerCommitFromLeader[receiver: Node, request: AppendEntriesRequest] {
+  commitIndex' - (receiver -> Index) = commitIndex - (receiver -> Index)
+  (
+    no request.leaderCommit
+    and receiver.commitIndex' = receiver.commitIndex
+  ) or (
+    some request.leaderCommit
+    and (
+      (
+        some newCommit : (receiver.log').Entry |
+          (no receiver.commitIndex or indexGte[newCommit, receiver.commitIndex])
+          and (newCommit = request.leaderCommit or request.leaderCommit in newCommit.^(indexOrd/next))
+          and receiver.commitIndex' = newCommit
+      ) or (
+        receiver.commitIndex' = receiver.commitIndex
+      )
+    )
+  )
+  commitDoesNotMoveBackward[receiver]
+}
+
 // Initial state for the leader-election model.
 pred init {
   // All nodes begin as followers.
@@ -494,7 +523,7 @@ pred sendAppendEntriesRequest[leader, other: Node, request: AppendEntriesRequest
   request.prevLogTerm = request.prevLogIndex.(leader.log).entryTerm
   request.appendEntryIndex = leader.nextIndex[other] & logIndexes[leader]
   request.appendEntry = request.appendEntryIndex.(leader.log)
-  no request.leaderCommit
+  request.leaderCommit = leader.commitIndex
 
   // Changed state.
   InFlight' = InFlight + request
@@ -556,6 +585,7 @@ pred handleAppendEntriesRequest[receiver: Node, request: AppendEntriesRequest, r
     and response.appendSuccess = False
     and no response.responseMatchIndex
     and log' = log
+    and commitIndex' = commitIndex
   ) or (
     request.messageTerm = receiver.currentTerm'
     and prevLogMatches[receiver, request]
@@ -590,6 +620,7 @@ pred handleAppendEntriesRequest[receiver: Node, request: AppendEntriesRequest, r
         and log' = log + (receiver -> request.appendEntryIndex -> request.appendEntry)
       )
     )
+    and followerCommitFromLeader[receiver, request]
   )
 
   // Changed state.
@@ -601,7 +632,6 @@ pred handleAppendEntriesRequest[receiver: Node, request: AppendEntriesRequest, r
   votesResponded' = votesResponded
   nextIndex' = nextIndex
   matchIndex' = matchIndex
-  commitIndex' = commitIndex
 }
 
 // A leader handles AppendEntries responses by updating its view of follower

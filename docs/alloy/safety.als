@@ -87,6 +87,11 @@ assert CommitIndexWithinLog {
   always all n: Node | n.commitIndex in logIndexes[n]
 }
 
+// Safety: commit indexes do not move backward.
+assert CommitIndexMonotonic {
+  always all n: Node | commitDoesNotMoveBackward[n]
+}
+
 // Safety: handling a failed AppendEntries response never moves nextIndex below
 // the first bounded index.
 assert FailedAppendEntriesKeepsNextIndexInScope {
@@ -157,6 +162,7 @@ check AtMostOneLeaderPerTerm for 5 Node, 6 Term, 4 Message
 check VotesGrantedSubsetVotesResponded for 5 Node, 6 Term, 4 Message
 check LeaderMatchIndexWithinLog for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value
 check CommitIndexWithinLog for 5 Node, 6 Term, 5 Message, 4 Index, 4 Entry, 2 Value
+check CommitIndexMonotonic for 5 Node, 6 Term, 5 Message, 4 Index, 4 Entry, 2 Value
 check FailedAppendEntriesKeepsNextIndexInScope for 5 Node, 6 Term, 5 Message, 4 Index, 4 Entry, 2 Value
 check LeaderAppendOnly for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value
 check AppendEntriesPrevLogMatchesSource for 5 Node, 6 Term, 5 Message, 4 Index, 4 Entry, 2 Value
