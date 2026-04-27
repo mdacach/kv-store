@@ -48,17 +48,6 @@ sig RequestVoteResponse extends Message {
 abstract sig Bool {}
 one sig True, False extends Bool {}
 
-// Visualizer-only event tags.
-// These are not part of the protocol state; they exist so the Alloy visualizer
-// can show which transition fired in a given step.
-enum Event {
-  TimeoutEvent,
-  SendRequestVoteRequestEvent,
-  HandleRequestVoteRequestEvent,
-  HandleRequestVoteResponseEvent,
-  StutterEvent
-}
-
 var sig Follower, Candidate, Leader in Node {}
 
 // Safety property: every node should always be in exactly one Raft role.
@@ -377,6 +366,18 @@ check LeadersStepDownBeforeTermChange for 5 Node, 6 Term, 4 Message
 check HigherTermRequestForcesStepDown for 5 Node, 6 Term, 4 Message
 check OneVotePerNodePerTerm for 5 Node, 6 Term, 4 Message
 check AtMostOneLeaderPerTerm for 5 Node, 6 Term, 4 Message
+
+
+// Visualizer-only event tags.
+// These are not part of the protocol state; they exist so the Alloy visualizer
+// can show which transition fired in a given step.
+enum Event {
+  TimeoutEvent,
+  SendRequestVoteRequestEvent,
+  HandleRequestVoteRequestEvent,
+  HandleRequestVoteResponseEvent,
+  StutterEvent
+}
 
 // Visualization helpers.
 //
