@@ -25,3 +25,9 @@ run leaderAppendTrace {
   eventually some Leader
   eventually some n: Node | some logIndexes[n]
 } for 3 Node, 4 Term, 2 Message, 3 Index, 3 Entry, 2 Value
+
+run appendEntriesSendTrace {
+  #Node = 3
+  #Term >= 2
+  eventually some AppendEntriesRequest & InFlight
+} for 3 Node, 4 Term, 3 Message, 3 Index, 3 Entry, 2 Value

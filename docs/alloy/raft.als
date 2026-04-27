@@ -73,6 +73,22 @@ sig RequestVoteResponse extends Message {
   voteGranted: one Bool
 }
 
+// A leader sends AppendEntries to replicate at most one entry, or to send an
+// empty heartbeat.
+sig AppendEntriesRequest extends Message {
+  prevLogIndex: lone Index,
+  prevLogTerm: lone Term,
+  appendEntryIndex: lone Index,
+  appendEntry: lone Entry,
+  leaderCommit: lone Index
+}
+
+// A follower replies to AppendEntries with replication progress.
+sig AppendEntriesResponse extends Message {
+  appendSuccess: one Bool,
+  responseMatchIndex: lone Index
+}
+
 // Simple boolean carrier for response payloads.
 abstract sig Bool {}
 one sig True, False extends Bool {}
@@ -411,6 +427,39 @@ pred clientAppend[leader: Node, entry: Entry] {
   matchIndex' = matchIndex
 }
 
+// A leader sends AppendEntries to one peer. The request carries the previous log
+// metadata for the peer's next index and at most one entry.
+pred sendAppendEntriesRequest[leader, other: Node, request: AppendEntriesRequest] {
+  leader in Leader
+  other != leader
+  some leader.nextIndex[other]
+  fresh[request]
+
+  request.source = leader
+  request.dest = other
+  request.messageTerm = leader.currentTerm
+  request.prevLogIndex = leader.nextIndex[other].(indexOrd/prev)
+  request.prevLogTerm = request.prevLogIndex.(leader.log).entryTerm
+  request.appendEntryIndex = leader.nextIndex[other] & logIndexes[leader]
+  request.appendEntry = request.appendEntryIndex.(leader.log)
+  no request.leaderCommit
+
+  // Changed state.
+  InFlight' = InFlight + request
+
+  // Unchanged state.
+  Follower' = Follower
+  Candidate' = Candidate
+  Leader' = Leader
+  currentTerm' = currentTerm
+  votedFor' = votedFor
+  votesGranted' = votesGranted
+  votesResponded' = votesResponded
+  log' = log
+  nextIndex' = nextIndex
+  matchIndex' = matchIndex
+}
+
 // A no-op transition to allow for lasso traces.
 pred stutter {
   // No state changes.
@@ -441,7 +490,10 @@ fact traces {
       handleRequestVoteResponse[candidate, response]
     or some candidate: Node | becomeLeader[candidate]
     or some leader: Node, entry: Entry | clientAppend[leader, entry]
+    or some leader, other: Node, request: AppendEntriesRequest |
+      sendAppendEntriesRequest[leader, other, request]
   )
 }
+
 
 
