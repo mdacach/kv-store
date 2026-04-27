@@ -14,6 +14,10 @@ sig Node {
   // candidate. Outside candidate state it may contain stale bookkeeping left
   // over from an earlier election, but no transition consults it there.
   var votesGranted: set Node,
+  // Servers from which this node has recorded a vote response in its current
+  // term. Because this model records a self-vote during timeout, the candidate
+  // is also recorded here at the start of an election.
+  var votesResponded: set Node,
   // Persistent log entries keyed by bounded log index.
   var log: Index -> lone Entry
 }
@@ -140,6 +144,7 @@ pred init {
   // No node has voted yet.
   no votedFor
   no votesGranted
+  no votesResponded
 
   // No messages are in flight initially.
   no InFlight
@@ -170,6 +175,8 @@ pred timeout[n: Node] {
     votedFor + (n -> n.currentTerm.(termOrd/next) -> n)
   votesGranted' =
     (votesGranted - (n -> Node)) + (n -> n)
+  votesResponded' =
+    (votesResponded - (n -> Node)) + (n -> n)
 
   // Unchanged state.
   Leader' = Leader
@@ -183,6 +190,7 @@ pred timeout[n: Node] {
 pred sendRequestVoteRequest[candidate, other: Node, request: RequestVoteRequest] {
   candidate in Candidate
   other != candidate
+  other not in candidate.votesResponded
   fresh[request]
 
   request.source = candidate
@@ -202,6 +210,7 @@ pred sendRequestVoteRequest[candidate, other: Node, request: RequestVoteRequest]
   currentTerm' = currentTerm
   votedFor' = votedFor
   votesGranted' = votesGranted
+  votesResponded' = votesResponded
   log' = log
 }
 
@@ -285,6 +294,7 @@ pred handleRequestVoteRequest[receiver: Node, request: RequestVoteRequest, respo
 
   // Unchanged state.
   votesGranted' = votesGranted
+  votesResponded' = votesResponded
   log' = log
 }
 
@@ -307,6 +317,8 @@ pred handleRequestVoteResponse[candidate: Node, response: RequestVoteResponse] {
     response.voteGranted = False
     and votesGranted' = votesGranted
   )
+  votesResponded' =
+    (votesResponded - (candidate -> Node)) + (candidate -> (candidate.votesResponded + response.source))
 
   // Processing the response consumes it from the network.
   InFlight' = InFlight - response
@@ -334,6 +346,7 @@ pred becomeLeader[candidate: Node] {
   currentTerm' = currentTerm
   votedFor' = votedFor
   votesGranted' = votesGranted
+  votesResponded' = votesResponded
   InFlight' = InFlight
   log' = log
 }
@@ -347,6 +360,7 @@ pred stutter {
   currentTerm' = currentTerm
   votedFor' = votedFor
   votesGranted' = votesGranted
+  votesResponded' = votesResponded
   InFlight' = InFlight
   log' = log
 }

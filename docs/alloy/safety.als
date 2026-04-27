@@ -51,6 +51,12 @@ assert AtMostOneLeaderPerTerm {
   always all t: Term | lone { n: Leader | n.currentTerm = t }
 }
 
+// Safety: granted votes are a subset of the responses the candidate has
+// recorded. Self-votes count as responded in this model.
+assert VotesGrantedSubsetVotesResponded {
+  always all n: Node | n.votesGranted in n.votesResponded
+}
+
 // Safety: any granted vote is only granted to a candidate whose log metadata is
 // at least as up-to-date as the receiver's log.
 assert GrantedVotesRequireUpToDateLog {
@@ -78,6 +84,7 @@ check LeadersStepDownBeforeTermChange for 5 Node, 6 Term, 4 Message
 check HigherTermRequestForcesStepDown for 5 Node, 6 Term, 4 Message
 check OneVotePerNodePerTerm for 5 Node, 6 Term, 4 Message
 check AtMostOneLeaderPerTerm for 5 Node, 6 Term, 4 Message
+check VotesGrantedSubsetVotesResponded for 5 Node, 6 Term, 4 Message
 check GrantedVotesRequireUpToDateLog for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value
 check OneEntryPerNodeIndex for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value
 check LogsAreContiguous for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value
