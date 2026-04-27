@@ -497,6 +497,96 @@ pred sendAppendEntriesRequest[leader, other: Node, request: AppendEntriesRequest
   matchIndex' = matchIndex
 }
 
+// A server handles AppendEntries by validating the previous-log metadata,
+// repairing conflicts, and replying with the replicated match index.
+pred handleAppendEntriesRequest[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
+  request in InFlight
+  request.dest = receiver
+  fresh[response]
+
+  response.source = receiver
+  response.dest = request.source
+
+  // First decide role and term effects. A higher-term RPC updates the receiver
+  // before log validation. A same-term AppendEntries from a leader moves the
+  // receiver to follower.
+  (
+    higherTermStepDown[receiver, request]
+    and response.messageTerm = request.messageTerm
+  ) or (
+    request.messageTerm = receiver.currentTerm
+    and receiver not in Follower
+    and Follower' = Follower + receiver
+    and Candidate' = Candidate - receiver
+    and Leader' = Leader - receiver
+    and currentTerm' = currentTerm
+    and response.messageTerm = receiver.currentTerm
+  ) or (
+    not termGt[request.messageTerm, receiver.currentTerm]
+    and (request.messageTerm != receiver.currentTerm or receiver in Follower)
+    and Follower' = Follower
+    and Candidate' = Candidate
+    and Leader' = Leader
+    and currentTerm' = currentTerm
+    and response.messageTerm = receiver.currentTerm
+  )
+
+  // Then decide whether the log portion of the request is accepted.
+  (
+    (
+      request.messageTerm != receiver.currentTerm'
+      or not prevLogMatches[receiver, request]
+    )
+    and response.appendSuccess = False
+    and no response.responseMatchIndex
+    and log' = log
+  ) or (
+    request.messageTerm = receiver.currentTerm'
+    and prevLogMatches[receiver, request]
+    and response.appendSuccess = True
+    and (
+      (
+        no request.appendEntryIndex
+        and no request.appendEntry
+        and response.responseMatchIndex = request.prevLogIndex
+        and log' = log
+      ) or (
+        some request.appendEntryIndex
+        and some request.appendEntry
+        and logEntry[receiver, request.appendEntryIndex].entryTerm = request.appendEntry.entryTerm
+        and response.responseMatchIndex = request.appendEntryIndex
+        and log' = log
+      ) or (
+        some request.appendEntryIndex
+        and some request.appendEntry
+        and some logEntry[receiver, request.appendEntryIndex]
+        and logEntry[receiver, request.appendEntryIndex].entryTerm != request.appendEntry.entryTerm
+        and response.responseMatchIndex = request.appendEntryIndex
+        and log' =
+          (log - (receiver -> indexesFrom[request.appendEntryIndex] -> Entry))
+          + (receiver -> request.appendEntryIndex -> request.appendEntry)
+      ) or (
+        some request.appendEntryIndex
+        and some request.appendEntry
+        and no logEntry[receiver, request.appendEntryIndex]
+        and request.appendEntryIndex = firstFreeLogIndex[receiver]
+        and response.responseMatchIndex = request.appendEntryIndex
+        and log' = log + (receiver -> request.appendEntryIndex -> request.appendEntry)
+      )
+    )
+  )
+
+  // Changed state.
+  InFlight' = (InFlight - request) + response
+
+  // Unchanged state.
+  votedFor' = votedFor
+  votesGranted' = votesGranted
+  votesResponded' = votesResponded
+  nextIndex' = nextIndex
+  matchIndex' = matchIndex
+}
+
 // A no-op transition to allow for lasso traces.
 pred stutter {
   // No state changes.
@@ -531,6 +621,8 @@ fact traces {
     or some leader: Node, entry: Entry | clientAppend[leader, entry]
     or some leader, other: Node, request: AppendEntriesRequest |
       sendAppendEntriesRequest[leader, other, request]
+    or some receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse |
+      handleAppendEntriesRequest[receiver, request, response]
   )
 }
 

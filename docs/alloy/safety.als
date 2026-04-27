@@ -103,6 +103,15 @@ assert AppendEntriesPrevLogMatchesSource {
     )
 }
 
+// Safety: successful AppendEntries handling only succeeds when the previous-log
+// metadata matched the receiver log before the request was applied.
+assert SuccessfulAppendEntriesRequiresPrevLogMatch {
+  always all receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse |
+    (handleAppendEntriesRequest[receiver, request, response]
+      and response.appendSuccess = True) implies
+        prevLogMatches[receiver, request]
+}
+
 // Safety: any granted vote is only granted to a candidate whose log metadata is
 // at least as up-to-date as the receiver's log.
 assert GrantedVotesRequireUpToDateLog {
@@ -135,6 +144,7 @@ check VotesGrantedSubsetVotesResponded for 5 Node, 6 Term, 4 Message
 check LeaderMatchIndexWithinLog for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value
 check LeaderAppendOnly for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value
 check AppendEntriesPrevLogMatchesSource for 5 Node, 6 Term, 5 Message, 4 Index, 4 Entry, 2 Value
+check SuccessfulAppendEntriesRequiresPrevLogMatch for 5 Node, 6 Term, 5 Message, 4 Index, 4 Entry, 2 Value
 check GrantedVotesRequireUpToDateLog for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value
 check OneEntryPerNodeIndex for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value
 check LogsAreContiguous for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value
