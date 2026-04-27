@@ -1,5 +1,6 @@
 module safety
 open raft
+open util/ordering[Index] as indexOrd
 
 // Safety property: every node should always be in exactly one Raft role.
 assert RolePartition {
@@ -50,6 +51,17 @@ assert AtMostOneLeaderPerTerm {
   always all t: Term | lone { n: Leader | n.currentTerm = t }
 }
 
+// Safety: each node has at most one log entry at each log index.
+assert OneEntryPerNodeIndex {
+  always all n: Node, i: Index | lone logEntry[n, i]
+}
+
+// Safety: occupied log indexes form a contiguous prefix.
+assert LogsAreContiguous {
+  always all n: Node, i: logIndexes[n], earlier: Index |
+    i in earlier.^(indexOrd/next) implies earlier in logIndexes[n]
+}
+
 check RolePartition for 5 Node, 6 Term, 4 Message
 check LeadersRequireMajority for 5 Node, 6 Term, 4 Message
 check LeadersKeepTheirElectionTerm for 5 Node, 6 Term, 4 Message
@@ -57,3 +69,5 @@ check LeadersStepDownBeforeTermChange for 5 Node, 6 Term, 4 Message
 check HigherTermRequestForcesStepDown for 5 Node, 6 Term, 4 Message
 check OneVotePerNodePerTerm for 5 Node, 6 Term, 4 Message
 check AtMostOneLeaderPerTerm for 5 Node, 6 Term, 4 Message
+check OneEntryPerNodeIndex for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value
+check LogsAreContiguous for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value

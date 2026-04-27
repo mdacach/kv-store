@@ -1,5 +1,6 @@
 module raft
 open util/ordering[Term] as termOrd
+open util/ordering[Index] as indexOrd
 
 // Cluster members.
 sig Node {
@@ -12,12 +13,27 @@ sig Node {
   // In the current model this set is only meaningful while the node is a
   // candidate. Outside candidate state it may contain stale bookkeeping left
   // over from an earlier election, but no transition consults it there.
-  var votesGranted: set Node
+  var votesGranted: set Node,
+  // Persistent log entries keyed by bounded log index.
+  var log: Index -> lone Entry
 }
 
 // Terms are finite and ordered in the model, even though Raft terms are
 // conceptually unbounded integers.
 sig Term {}
+
+// Log indexes are finite and ordered in the model. They represent the bounded
+// prefix of possible Raft log positions explored in a given Alloy scope.
+sig Index {}
+
+// Abstract client payloads. Their identity is enough for safety properties.
+sig Value {}
+
+// A log entry records the election term in which the leader created it.
+sig Entry {
+  entryTerm: one Term,
+  entryValue: one Value
+}
 
 // Base shape for all messages.
 abstract sig Message {
@@ -66,6 +82,26 @@ pred hasMajority[votes: set Node] {
   gt[#votes, div[#Node, 2]]
 }
 
+// Indexes currently occupied in a node's log.
+fun logIndexes[n: Node] : set Index {
+  n.log.Entry
+}
+
+// Entry at a specific node/index, if present.
+fun logEntry[n: Node, i: Index] : lone Entry {
+  i.(n.log)
+}
+
+// The last occupied log index for a node, if its log is non-empty.
+fun lastLogIndex[n: Node] : lone Index {
+  { i : logIndexes[n] | no i.(indexOrd/next) & logIndexes[n] }
+}
+
+// The term of the last log entry for a node, if its log is non-empty.
+fun lastLogTerm[n: Node] : lone Term {
+  lastLogIndex[n].(n.log).entryTerm
+}
+
 // Initial state for the leader-election model.
 pred init {
   // All nodes begin as followers.
@@ -82,6 +118,9 @@ pred init {
 
   // No messages are in flight initially.
   no InFlight
+
+  // Logs start empty.
+  no log
 }
 
 // A follower or candidate times out and starts a new election in the next term.
@@ -112,6 +151,7 @@ pred timeout[n: Node] {
   // Timeouts do not directly change the network. Vote requests will come
   // as part of another transition.
   InFlight' = InFlight
+  log' = log
 }
 
 // A candidate sends a RequestVoteRequest to one peer.
@@ -135,6 +175,7 @@ pred sendRequestVoteRequest[candidate, other: Node, request: RequestVoteRequest]
   currentTerm' = currentTerm
   votedFor' = votedFor
   votesGranted' = votesGranted
+  log' = log
 }
 
 // A higher-term RequestVoteRequest forces the receiver to step down and adopt
@@ -215,6 +256,7 @@ pred handleRequestVoteRequest[receiver: Node, request: RequestVoteRequest, respo
 
   // Unchanged state.
   votesGranted' = votesGranted
+  log' = log
 }
 
 // A candidate receives a vote response for its current term.
@@ -246,6 +288,7 @@ pred handleRequestVoteResponse[candidate: Node, response: RequestVoteResponse] {
   Leader' = Leader
   currentTerm' = currentTerm
   votedFor' = votedFor
+  log' = log
 }
 
 // A candidate with a quorum of granted votes becomes leader.
@@ -263,6 +306,7 @@ pred becomeLeader[candidate: Node] {
   votedFor' = votedFor
   votesGranted' = votesGranted
   InFlight' = InFlight
+  log' = log
 }
 
 // A no-op transition to allow for lasso traces.
@@ -275,6 +319,7 @@ pred stutter {
   votedFor' = votedFor
   votesGranted' = votesGranted
   InFlight' = InFlight
+  log' = log
 }
 
 // Temporal behavior for the current scaffold.

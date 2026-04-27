@@ -7,7 +7,7 @@ run voteExchangeTrace {
   eventually some RequestVoteRequest & InFlight
   eventually some RequestVoteResponse & InFlight
   eventually some votesGranted
-} for 5 Node, 6 Term, 4 Message
+} for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value
 
 // With 5 nodes, a candidate already has its self-vote, so it needs 2 more
 // votes to reach a majority of 3. Because message fields are immutable, each
@@ -17,4 +17,4 @@ run leaderTrace {
   #Node = 5
   #Term >= 2
   eventually some Leader
-} for 5 Node, 6 Term, 4 Message
+} for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value
