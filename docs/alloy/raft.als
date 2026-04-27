@@ -118,6 +118,11 @@ fun lastLogTerm[n: Node] : lone Term {
   lastLogIndex[n].(n.log).entryTerm
 }
 
+// Entries currently present in any node log.
+fun entriesInLogs : set Entry {
+  Index.(Node.log)
+}
+
 // First unoccupied log index after a node's contiguous log prefix, if one is
 // representable in the bounded Index scope.
 fun firstFreeLogIndex[n: Node] : lone Index {
@@ -383,6 +388,29 @@ pred becomeLeader[candidate: Node] {
     matchIndex - (candidate -> Node -> Index)
 }
 
+// A leader receives a client command and appends it to its local log.
+pred clientAppend[leader: Node, entry: Entry] {
+  leader in Leader
+  some firstFreeLogIndex[leader]
+  entry not in entriesInLogs
+  entry.entryTerm = leader.currentTerm
+
+  // Changed state.
+  log' = log + (leader -> firstFreeLogIndex[leader] -> entry)
+
+  // Unchanged state.
+  Follower' = Follower
+  Candidate' = Candidate
+  Leader' = Leader
+  currentTerm' = currentTerm
+  votedFor' = votedFor
+  votesGranted' = votesGranted
+  votesResponded' = votesResponded
+  InFlight' = InFlight
+  nextIndex' = nextIndex
+  matchIndex' = matchIndex
+}
+
 // A no-op transition to allow for lasso traces.
 pred stutter {
   // No state changes.
@@ -412,6 +440,7 @@ fact traces {
     or some candidate: Node, response: RequestVoteResponse |
       handleRequestVoteResponse[candidate, response]
     or some candidate: Node | becomeLeader[candidate]
+    or some leader: Node, entry: Entry | clientAppend[leader, entry]
   )
 }
 

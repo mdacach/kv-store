@@ -18,3 +18,10 @@ run leaderTrace {
   #Term >= 2
   eventually some Leader
 } for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value
+
+run leaderAppendTrace {
+  #Node = 3
+  #Term >= 2
+  eventually some Leader
+  eventually some n: Node | some logIndexes[n]
+} for 3 Node, 4 Term, 2 Message, 3 Index, 3 Entry, 2 Value

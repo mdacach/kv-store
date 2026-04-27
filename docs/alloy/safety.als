@@ -64,6 +64,14 @@ assert LeaderMatchIndexWithinLog {
     leader.matchIndex[peer] in logIndexes[leader]
 }
 
+// Safety: a node that remains leader in the same term never changes entries
+// already present in its own log.
+assert LeaderAppendOnly {
+  always all n: Node, i: logIndexes[n] |
+    (n in Leader and n in Leader' and n.currentTerm' = n.currentTerm) implies
+      i.(n.log') = i.(n.log)
+}
+
 // Safety: any granted vote is only granted to a candidate whose log metadata is
 // at least as up-to-date as the receiver's log.
 assert GrantedVotesRequireUpToDateLog {
@@ -93,6 +101,7 @@ check OneVotePerNodePerTerm for 5 Node, 6 Term, 4 Message
 check AtMostOneLeaderPerTerm for 5 Node, 6 Term, 4 Message
 check VotesGrantedSubsetVotesResponded for 5 Node, 6 Term, 4 Message
 check LeaderMatchIndexWithinLog for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value
+check LeaderAppendOnly for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value
 check GrantedVotesRequireUpToDateLog for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value
 check OneEntryPerNodeIndex for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value
 check LogsAreContiguous for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value
