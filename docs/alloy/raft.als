@@ -148,6 +148,11 @@ fun firstFreeLogIndex[n: Node] : lone Index {
   }
 }
 
+// Indexes at or after a given index.
+fun indexesFrom[i: Index] : set Index {
+  i + i.^(indexOrd/next)
+}
+
 // Raft's log freshness rule for RequestVote. A candidate is at least as
 // up-to-date as the receiver when its last log term is newer, or when terms are
 // equal and its last log index is at least as large.
@@ -163,6 +168,16 @@ pred logUpToDate[candidateLastIndex: lone Index, candidateLastTerm: lone Term, r
         and indexGte[candidateLastIndex, lastLogIndex[receiver]]
       )
     )
+  )
+}
+
+// AppendEntries can proceed only when the receiver contains the previous log
+// entry named by the leader, or when the leader is appending at the first index.
+pred prevLogMatches[receiver: Node, request: AppendEntriesRequest] {
+  no request.prevLogIndex
+  or (
+    request.prevLogIndex in logIndexes[receiver]
+    and request.prevLogTerm = logEntry[receiver, request.prevLogIndex].entryTerm
   )
 }
 
