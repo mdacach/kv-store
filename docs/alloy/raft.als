@@ -153,6 +153,11 @@ fun indexesFrom[i: Index] : set Index {
   i + i.^(indexOrd/next)
 }
 
+// The previous index, or the first index when already at the beginning.
+fun decrementIndex[i: Index] : one Index {
+  i.(indexOrd/prev) + (i & indexOrd/first)
+}
+
 // Raft's log freshness rule for RequestVote. A candidate is at least as
 // up-to-date as the receiver when its last log term is newer, or when terms are
 // equal and its last log index is at least as large.
@@ -587,6 +592,57 @@ pred handleAppendEntriesRequest[receiver: Node, request: AppendEntriesRequest, r
   matchIndex' = matchIndex
 }
 
+// A leader handles AppendEntries responses by updating its view of follower
+// replication progress.
+pred handleAppendEntriesResponse[leader: Node, response: AppendEntriesResponse] {
+  leader in Leader
+  response in InFlight
+  response.dest = leader
+  response.messageTerm = leader.currentTerm
+
+  // Changed state.
+  (
+    response.appendSuccess = True
+    and some response.responseMatchIndex
+    and matchIndex' =
+      (matchIndex - (leader -> response.source -> Index))
+      + (leader -> response.source -> response.responseMatchIndex)
+    and nextIndex' =
+      (nextIndex - (leader -> response.source -> Index))
+      + (leader -> response.source -> response.responseMatchIndex.(indexOrd/next))
+  ) or (
+    response.appendSuccess = True
+    and no response.responseMatchIndex
+    and matchIndex' = matchIndex
+    and nextIndex' = nextIndex
+  ) or (
+    response.appendSuccess = False
+    and some leader.nextIndex[response.source]
+    and matchIndex' = matchIndex
+    and nextIndex' =
+      (nextIndex - (leader -> response.source -> Index))
+      + (leader -> response.source -> decrementIndex[leader.nextIndex[response.source]])
+  ) or (
+    response.appendSuccess = False
+    and no leader.nextIndex[response.source]
+    and matchIndex' = matchIndex
+    and nextIndex' = nextIndex
+  )
+
+  // Processing the response consumes it from the network.
+  InFlight' = InFlight - response
+
+  // Unchanged state.
+  Follower' = Follower
+  Candidate' = Candidate
+  Leader' = Leader
+  currentTerm' = currentTerm
+  votedFor' = votedFor
+  votesGranted' = votesGranted
+  votesResponded' = votesResponded
+  log' = log
+}
+
 // A no-op transition to allow for lasso traces.
 pred stutter {
   // No state changes.
@@ -623,6 +679,8 @@ fact traces {
       sendAppendEntriesRequest[leader, other, request]
     or some receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse |
       handleAppendEntriesRequest[receiver, request, response]
+    or some leader: Node, response: AppendEntriesResponse |
+      handleAppendEntriesResponse[leader, response]
   )
 }
 

@@ -38,3 +38,9 @@ run appendEntriesReplicationTrace {
   eventually some disj leader, follower: Node |
     leader in Leader and some logIndexes[leader] and some logIndexes[follower]
 } for 3 Node, 4 Term, 4 Message, 3 Index, 3 Entry, 2 Value
+
+run appendEntriesResponseTrace {
+  #Node = 3
+  #Term >= 2
+  eventually some n: Node | some n.matchIndex
+} for 3 Node, 4 Term, 4 Message, 3 Index, 3 Entry, 2 Value

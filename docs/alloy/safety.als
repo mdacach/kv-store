@@ -82,6 +82,15 @@ assert LeaderMatchIndexWithinLog {
     leader.matchIndex[peer] in logIndexes[leader]
 }
 
+// Safety: handling a failed AppendEntries response never moves nextIndex below
+// the first bounded index.
+assert FailedAppendEntriesKeepsNextIndexInScope {
+  always all leader: Node, response: AppendEntriesResponse |
+    (handleAppendEntriesResponse[leader, response]
+      and response.appendSuccess = False) implies
+        leader.nextIndex'[response.source] in Index
+}
+
 // Safety: a node that remains leader in the same term never changes entries
 // already present in its own log.
 assert LeaderAppendOnly {
@@ -142,6 +151,7 @@ check OneVotePerNodePerTerm for 5 Node, 6 Term, 4 Message
 check AtMostOneLeaderPerTerm for 5 Node, 6 Term, 4 Message
 check VotesGrantedSubsetVotesResponded for 5 Node, 6 Term, 4 Message
 check LeaderMatchIndexWithinLog for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value
+check FailedAppendEntriesKeepsNextIndexInScope for 5 Node, 6 Term, 5 Message, 4 Index, 4 Entry, 2 Value
 check LeaderAppendOnly for 5 Node, 6 Term, 4 Message, 4 Index, 4 Entry, 2 Value
 check AppendEntriesPrevLogMatchesSource for 5 Node, 6 Term, 5 Message, 4 Index, 4 Entry, 2 Value
 check SuccessfulAppendEntriesRequiresPrevLogMatch for 5 Node, 6 Term, 5 Message, 4 Index, 4 Entry, 2 Value
