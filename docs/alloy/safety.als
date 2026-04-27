@@ -76,6 +76,15 @@ assert DropMessageOnlyConsumesNetwork {
     }
 }
 
+// Safety: duplicated messages preserve the original protocol payload.
+assert DuplicateMessagePreservesPayload {
+  always all message, duplicate: Message |
+    duplicateMessage[message, duplicate] implies {
+      sameMessagePayload[message, duplicate]
+      duplicate in InFlight'
+    }
+}
+
 // Safety: once a node records a vote for a term, that vote never changes.
 assert OneVotePerNodePerTerm {
   always all n: Node, t: Term |
@@ -212,6 +221,7 @@ check LeadersStepDownBeforeTermChange for 5 Node, 6 Term, 4 Message
 check HigherTermRequestForcesStepDown for 5 Node, 6 Term, 4 Message
 check DropStaleResponseOnlyConsumesNetwork for 5 Node, 6 Term, 5 Message, 4 Index, 4 Entry, 2 Value
 check DropMessageOnlyConsumesNetwork for 5 Node, 6 Term, 5 Message, 4 Index, 4 Entry, 2 Value
+check DuplicateMessagePreservesPayload for 5 Node, 6 Term, 5 Message, 4 Index, 4 Entry, 2 Value
 check OneVotePerNodePerTerm for 5 Node, 6 Term, 4 Message
 check AtMostOneLeaderPerTerm for 5 Node, 6 Term, 4 Message
 check VotesGrantedSubsetVotesResponded for 5 Node, 6 Term, 4 Message

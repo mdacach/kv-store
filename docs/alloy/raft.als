@@ -499,6 +499,62 @@ pred dropMessage[message: Message] {
   commitIndex' = commitIndex
 }
 
+// Two distinct message atoms can represent network duplication when their
+// protocol payloads are identical.
+pred sameMessagePayload[message, duplicate: Message] {
+  duplicate.source = message.source
+  duplicate.dest = message.dest
+  duplicate.messageTerm = message.messageTerm
+
+  (
+    message in RequestVoteRequest
+    and duplicate in RequestVoteRequest
+    and duplicate.requestLastLogIndex = message.requestLastLogIndex
+    and duplicate.requestLastLogTerm = message.requestLastLogTerm
+  ) or (
+    message in RequestVoteResponse
+    and duplicate in RequestVoteResponse
+    and duplicate.voteGranted = message.voteGranted
+  ) or (
+    message in AppendEntriesRequest
+    and duplicate in AppendEntriesRequest
+    and duplicate.prevLogIndex = message.prevLogIndex
+    and duplicate.prevLogTerm = message.prevLogTerm
+    and duplicate.appendEntryIndex = message.appendEntryIndex
+    and duplicate.appendEntry = message.appendEntry
+    and duplicate.leaderCommit = message.leaderCommit
+  ) or (
+    message in AppendEntriesResponse
+    and duplicate in AppendEntriesResponse
+    and duplicate.appendSuccess = message.appendSuccess
+    and duplicate.responseMatchIndex = message.responseMatchIndex
+  )
+}
+
+// The network may duplicate any in-flight message by adding a fresh atom with
+// the same protocol payload.
+pred duplicateMessage[message, duplicate: Message] {
+  message in InFlight
+  fresh[duplicate]
+  sameMessagePayload[message, duplicate]
+
+  // Changed state.
+  InFlight' = InFlight + duplicate
+
+  // Unchanged state.
+  Follower' = Follower
+  Candidate' = Candidate
+  Leader' = Leader
+  currentTerm' = currentTerm
+  votedFor' = votedFor
+  votesGranted' = votesGranted
+  votesResponded' = votesResponded
+  log' = log
+  nextIndex' = nextIndex
+  matchIndex' = matchIndex
+  commitIndex' = commitIndex
+}
+
 // A candidate with a quorum of granted votes becomes leader.
 pred becomeLeader[candidate: Node] {
   candidate in Candidate
@@ -785,6 +841,8 @@ fact traces {
       dropStaleResponse[receiver, response]
     or some message: Message |
       dropMessage[message]
+    or some message, duplicate: Message |
+      duplicateMessage[message, duplicate]
     or some candidate: Node | becomeLeader[candidate]
     or some leader: Node, entry: Entry | clientAppend[leader, entry]
     or some leader, other: Node, request: AppendEntriesRequest |
