@@ -1,4 +1,6 @@
+module raft
 open util/ordering[Term] as termOrd
+open util/ordering[Index] as indexOrd
 
 // Cluster members.
 sig Node {
@@ -11,12 +13,38 @@ sig Node {
   // In the current model this set is only meaningful while the node is a
   // candidate. Outside candidate state it may contain stale bookkeeping left
   // over from an earlier election, but no transition consults it there.
-  var votesGranted: set Node
+  var votesGranted: set Node,
+  // Servers from which this node has recorded a vote response in its current
+  // term. Because this model records a self-vote during timeout, the candidate
+  // is also recorded here at the start of an election.
+  var votesResponded: set Node,
+  // Persistent log entries keyed by bounded log index.
+  var log: Index -> lone Entry,
+  // For leaders, the next log index to send to each peer. A missing index means
+  // the next position is outside the bounded Index scope.
+  var nextIndex: Node -> lone Index,
+  // For leaders, the highest log index each peer has acknowledged.
+  var matchIndex: Node -> lone Index,
+  // Highest log index known to be committed on this node.
+  var commitIndex: lone Index
 }
 
 // Terms are finite and ordered in the model, even though Raft terms are
 // conceptually unbounded integers.
 sig Term {}
+
+// Log indexes are finite and ordered in the model. They represent the bounded
+// prefix of possible Raft log positions explored in a given Alloy scope.
+sig Index {}
+
+// Abstract client payloads. Their identity is enough for safety properties.
+sig Value {}
+
+// A log entry records the election term in which the leader created it.
+sig Entry {
+  entryTerm: one Term,
+  entryValue: one Value
+}
 
 // Base shape for all messages.
 abstract sig Message {
@@ -37,11 +65,30 @@ abstract sig Message {
 var sig InFlight in Message {}
 
 // A candidate asks another node for a vote.
-sig RequestVoteRequest extends Message {}
+sig RequestVoteRequest extends Message {
+  requestLastLogIndex: lone Index,
+  requestLastLogTerm: lone Term
+}
 
 // A node replies to a vote request.
 sig RequestVoteResponse extends Message {
   voteGranted: one Bool
+}
+
+// A leader sends AppendEntries to replicate at most one entry, or to send an
+// empty heartbeat.
+sig AppendEntriesRequest extends Message {
+  prevLogIndex: lone Index,
+  prevLogTerm: lone Term,
+  appendEntryIndex: lone Index,
+  appendEntry: lone Entry,
+  leaderCommit: lone Index
+}
+
+// A follower replies to AppendEntries with replication progress.
+sig AppendEntriesResponse extends Message {
+  appendSuccess: one Bool,
+  responseMatchIndex: lone Index
 }
 
 // Simple boolean carrier for response payloads.
@@ -49,14 +96,6 @@ abstract sig Bool {}
 one sig True, False extends Bool {}
 
 var sig Follower, Candidate, Leader in Node {}
-
-// Safety property: every node should always be in exactly one Raft role.
-assert RolePartition {
-  always {
-    Node = Follower + Candidate + Leader
-    disj[Follower, Candidate, Leader]
-  }
-}
 
 // Messages used in a transition must be outside the network before that step.
 pred fresh[m: Message] {
@@ -68,9 +107,132 @@ pred termGt[t1, t2: Term] {
   t1 in t2.^(termOrd/next)
 }
 
+pred indexGte[i1, i2: Index] {
+  i1 = i2 or i1 in i2.^(indexOrd/next)
+}
+
+pred indexGt[i1, i2: Index] {
+  i1 in i2.^(indexOrd/next)
+}
+
 // A set of votes is a quorum when it is a strict majority of the cluster.
 pred hasMajority[votes: set Node] {
   gt[#votes, div[#Node, 2]]
+}
+
+// Indexes currently occupied in a node's log.
+fun logIndexes[n: Node] : set Index {
+  n.log.Entry
+}
+
+// Entry at a specific node/index, if present.
+fun logEntry[n: Node, i: Index] : lone Entry {
+  i.(n.log)
+}
+
+// The last occupied log index for a node, if its log is non-empty.
+fun lastLogIndex[n: Node] : lone Index {
+  { i : logIndexes[n] | no i.(indexOrd/next) & logIndexes[n] }
+}
+
+// The term of the last log entry for a node, if its log is non-empty.
+fun lastLogTerm[n: Node] : lone Term {
+  lastLogIndex[n].(n.log).entryTerm
+}
+
+// Entries currently present in any node log.
+fun entriesInLogs : set Entry {
+  Index.(Node.log)
+}
+
+// First unoccupied log index after a node's contiguous log prefix, if one is
+// representable in the bounded Index scope.
+fun firstFreeLogIndex[n: Node] : lone Index {
+  { i : Index |
+    i not in logIndexes[n]
+    and (i = indexOrd/first or i.(indexOrd/prev) in logIndexes[n])
+  }
+}
+
+// Indexes at or after a given index.
+fun indexesFrom[i: Index] : set Index {
+  i + i.^(indexOrd/next)
+}
+
+// The previous index, or the first index when already at the beginning.
+fun decrementIndex[i: Index] : one Index {
+  i.(indexOrd/prev) + (i & indexOrd/first)
+}
+
+// Raft's log freshness rule for RequestVote. A candidate is at least as
+// up-to-date as the receiver when its last log term is newer, or when terms are
+// equal and its last log index is at least as large.
+pred logUpToDate[candidateLastIndex: lone Index, candidateLastTerm: lone Term, receiver: Node] {
+  no lastLogTerm[receiver]
+  or (
+    some candidateLastTerm
+    and (
+      termGt[candidateLastTerm, lastLogTerm[receiver]]
+      or (
+        candidateLastTerm = lastLogTerm[receiver]
+        and some candidateLastIndex
+        and indexGte[candidateLastIndex, lastLogIndex[receiver]]
+      )
+    )
+  )
+}
+
+// AppendEntries can proceed only when the receiver contains the previous log
+// entry named by the leader, or when the leader is appending at the first index.
+pred prevLogMatches[receiver: Node, request: AppendEntriesRequest] {
+  no request.prevLogIndex
+  or (
+    request.prevLogIndex in logIndexes[receiver]
+    and request.prevLogTerm = logEntry[receiver, request.prevLogIndex].entryTerm
+  )
+}
+
+pred commitDoesNotMoveBackward[n: Node] {
+  no n.commitIndex
+  or (
+    some n.commitIndex'
+    and indexGte[n.commitIndex', n.commitIndex]
+  )
+}
+
+pred followerCommitFromLeader[receiver: Node, request: AppendEntriesRequest] {
+  commitIndex' - (receiver -> Index) = commitIndex - (receiver -> Index)
+  (
+    no request.leaderCommit
+    and receiver.commitIndex' = receiver.commitIndex
+  ) or (
+    some request.leaderCommit
+    and (
+      (
+        some newCommit : (receiver.log').Entry |
+          (no receiver.commitIndex or indexGte[newCommit, receiver.commitIndex])
+          and (newCommit = request.leaderCommit or request.leaderCommit in newCommit.^(indexOrd/next))
+          and receiver.commitIndex' = newCommit
+      ) or (
+        receiver.commitIndex' = receiver.commitIndex
+      )
+    )
+  )
+  commitDoesNotMoveBackward[receiver]
+}
+
+pred quorumAgreesThrough[leader: Node, index: Index] {
+  hasMajority[
+    leader + { peer : Node |
+      some leader.matchIndex[peer]
+      and indexGte[leader.matchIndex[peer], index]
+    }
+  ]
+}
+
+pred committedThrough[n: Node, i: Index] {
+  some n.commitIndex
+  and indexGte[n.commitIndex, i]
 }
 
 // Initial state for the leader-election model.
@@ -86,9 +248,18 @@ pred init {
   // No node has voted yet.
   no votedFor
   no votesGranted
+  no votesResponded
 
   // No messages are in flight initially.
   no InFlight
+
+  // Logs start empty.
+  no log
+
+  // Leader replication bookkeeping starts in its default empty-log state.
+  nextIndex = Node -> Node -> indexOrd/first
+  no matchIndex
+  no commitIndex
 }
 
 // A follower or candidate times out and starts a new election in the next term.
@@ -113,23 +284,34 @@ pred timeout[n: Node] {
     votedFor + (n -> n.currentTerm.(termOrd/next) -> n)
   votesGranted' =
     (votesGranted - (n -> Node)) + (n -> n)
+  votesResponded' =
+    (votesResponded - (n -> Node)) + (n -> n)
+  nextIndex' =
+    (nextIndex - (n -> Node -> Index)) + (n -> Node -> indexOrd/first)
+  matchIndex' =
+    matchIndex - (n -> Node -> Index)
 
   // Unchanged state.
   Leader' = Leader
   // Timeouts do not directly change the network. Vote requests will come
   // as part of another transition.
   InFlight' = InFlight
+  log' = log
+  commitIndex' = commitIndex
 }
 
 // A candidate sends a RequestVoteRequest to one peer.
 pred sendRequestVoteRequest[candidate, other: Node, request: RequestVoteRequest] {
   candidate in Candidate
   other != candidate
+  other not in candidate.votesResponded
   fresh[request]
 
   request.source = candidate
   request.dest = other
   request.messageTerm = candidate.currentTerm
+  request.requestLastLogIndex = lastLogIndex[candidate]
+  request.requestLastLogTerm = lastLogTerm[candidate]
 
   // Changed state.
   // The new message becomes in-flight.
@@ -142,19 +324,22 @@ pred sendRequestVoteRequest[candidate, other: Node, request: RequestVoteRequest]
   currentTerm' = currentTerm
   votedFor' = votedFor
   votesGranted' = votesGranted
+  votesResponded' = votesResponded
+  log' = log
+  nextIndex' = nextIndex
+  matchIndex' = matchIndex
+  commitIndex' = commitIndex
 }
 
-// A higher-term RequestVoteRequest forces the receiver to step down and adopt
-// the newer term before the vote is evaluated.
-pred higherTermRequestStepDown[receiver: Node, request: RequestVoteRequest, response: RequestVoteResponse] {
-  termGt[request.messageTerm, receiver.currentTerm]
+// A higher-term RPC forces the receiver to step down and adopt the newer term.
+pred higherTermStepDown[receiver: Node, message: Message] {
+  termGt[message.messageTerm, receiver.currentTerm]
 
   Follower' = Follower + receiver
   Candidate' = Candidate - receiver
   Leader' = Leader - receiver
   currentTerm' =
-    (currentTerm - (receiver -> Term)) + (receiver -> request.messageTerm)
-  response.messageTerm = request.messageTerm
+    (currentTerm - (receiver -> Term)) + (receiver -> message.messageTerm)
 }
 
 // A vote request is granted when it matches the receiver's effective current
@@ -162,6 +347,7 @@ pred higherTermRequestStepDown[receiver: Node, request: RequestVoteRequest, resp
 pred grantRequestVote[receiver: Node, request: RequestVoteRequest, response: RequestVoteResponse] {
   request.messageTerm = receiver.currentTerm'
   receiver.votedFor[request.messageTerm] in none + request.source
+  logUpToDate[request.requestLastLogIndex, request.requestLastLogTerm, receiver]
 
   votedFor' = votedFor + (receiver -> request.messageTerm -> request.source)
   response.voteGranted = True
@@ -171,6 +357,7 @@ pred grantRequestVote[receiver: Node, request: RequestVoteRequest, response: Req
 pred denyRequestVote[receiver: Node, request: RequestVoteRequest, response: RequestVoteResponse] {
   request.messageTerm != receiver.currentTerm'
   or receiver.votedFor[request.messageTerm] not in none + request.source
+  or not logUpToDate[request.requestLastLogIndex, request.requestLastLogTerm, receiver]
 
   votedFor' = votedFor
   response.voteGranted = False
@@ -192,7 +379,8 @@ pred handleRequestVoteRequest[receiver: Node, request: RequestVoteRequest, respo
   // newer term before considering the vote. Otherwise its role and term stay as-is.
   (
     // Changed state.
-    higherTermRequestStepDown[receiver, request, response]
+    higherTermStepDown[receiver, request]
+    and response.messageTerm = request.messageTerm
   ) or (
     // Unchanged state.
     not termGt[request.messageTerm, receiver.currentTerm]
@@ -222,6 +410,11 @@ pred handleRequestVoteRequest[receiver: Node, request: RequestVoteRequest, respo
 
   // Unchanged state.
   votesGranted' = votesGranted
+  votesResponded' = votesResponded
+  log' = log
+  nextIndex' = nextIndex
+  matchIndex' = matchIndex
+  commitIndex' = commitIndex
 }
 
 // A candidate receives a vote response for its current term.
@@ -243,6 +436,8 @@ pred handleRequestVoteResponse[candidate: Node, response: RequestVoteResponse] {
     response.voteGranted = False
     and votesGranted' = votesGranted
   )
+  votesResponded' =
+    (votesResponded - (candidate -> Node)) + (candidate -> (candidate.votesResponded + response.source))
 
   // Processing the response consumes it from the network.
   InFlight' = InFlight - response
@@ -253,6 +448,111 @@ pred handleRequestVoteResponse[candidate: Node, response: RequestVoteResponse] {
   Leader' = Leader
   currentTerm' = currentTerm
   votedFor' = votedFor
+  log' = log
+  nextIndex' = nextIndex
+  matchIndex' = matchIndex
+  commitIndex' = commitIndex
+}
+
+// A stale response can be discarded without changing local protocol state.
+pred dropStaleResponse[receiver: Node, response: Message] {
+  response in InFlight
+  response.dest = receiver
+  response in RequestVoteResponse + AppendEntriesResponse
+  termGt[receiver.currentTerm, response.messageTerm]
+
+  // Changed state.
+  InFlight' = InFlight - response
+
+  // Unchanged state.
+  Follower' = Follower
+  Candidate' = Candidate
+  Leader' = Leader
+  currentTerm' = currentTerm
+  votedFor' = votedFor
+  votesGranted' = votesGranted
+  votesResponded' = votesResponded
+  log' = log
+  nextIndex' = nextIndex
+  matchIndex' = matchIndex
+  commitIndex' = commitIndex
+}
+
+// The network may drop any in-flight message.
+pred dropMessage[message: Message] {
+  message in InFlight
+
+  // Changed state.
+  InFlight' = InFlight - message
+
+  // Unchanged state.
+  Follower' = Follower
+  Candidate' = Candidate
+  Leader' = Leader
+  currentTerm' = currentTerm
+  votedFor' = votedFor
+  votesGranted' = votesGranted
+  votesResponded' = votesResponded
+  log' = log
+  nextIndex' = nextIndex
+  matchIndex' = matchIndex
+  commitIndex' = commitIndex
+}
+
+// Two distinct message atoms can represent network duplication when their
+// protocol payloads are identical.
+pred sameMessagePayload[message, duplicate: Message] {
+  duplicate.source = message.source
+  duplicate.dest = message.dest
+  duplicate.messageTerm = message.messageTerm
+
+  (
+    message in RequestVoteRequest
+    and duplicate in RequestVoteRequest
+    and duplicate.requestLastLogIndex = message.requestLastLogIndex
+    and duplicate.requestLastLogTerm = message.requestLastLogTerm
+  ) or (
+    message in RequestVoteResponse
+    and duplicate in RequestVoteResponse
+    and duplicate.voteGranted = message.voteGranted
+  ) or (
+    message in AppendEntriesRequest
+    and duplicate in AppendEntriesRequest
+    and duplicate.prevLogIndex = message.prevLogIndex
+    and duplicate.prevLogTerm = message.prevLogTerm
+    and duplicate.appendEntryIndex = message.appendEntryIndex
+    and duplicate.appendEntry = message.appendEntry
+    and duplicate.leaderCommit = message.leaderCommit
+  ) or (
+    message in AppendEntriesResponse
+    and duplicate in AppendEntriesResponse
+    and duplicate.appendSuccess = message.appendSuccess
+    and duplicate.responseMatchIndex = message.responseMatchIndex
+  )
+}
+
+// The network may duplicate any in-flight message by adding a fresh atom with
+// the same protocol payload.
+pred duplicateMessage[message, duplicate: Message] {
+  message in InFlight
+  fresh[duplicate]
+  sameMessagePayload[message, duplicate]
+
+  // Changed state.
+  InFlight' = InFlight + duplicate
+
+  // Unchanged state.
+  Follower' = Follower
+  Candidate' = Candidate
+  Leader' = Leader
+  currentTerm' = currentTerm
+  votedFor' = votedFor
+  votesGranted' = votesGranted
+  votesResponded' = votesResponded
+  log' = log
+  nextIndex' = nextIndex
+  matchIndex' = matchIndex
+  commitIndex' = commitIndex
 }
 
 // A candidate with a quorum of granted votes becomes leader.
@@ -269,7 +569,243 @@ pred becomeLeader[candidate: Node] {
   currentTerm' = currentTerm
   votedFor' = votedFor
   votesGranted' = votesGranted
+  votesResponded' = votesResponded
   InFlight' = InFlight
+  log' = log
+  nextIndex' =
+    (nextIndex - (candidate -> Node -> Index)) + (candidate -> Node -> firstFreeLogIndex[candidate])
+  matchIndex' =
+    matchIndex - (candidate -> Node -> Index)
+  commitIndex' = commitIndex
+}
+
+// A leader receives a client command and appends it to its local log.
+pred clientAppend[leader: Node, entry: Entry] {
+  leader in Leader
+  some firstFreeLogIndex[leader]
+  entry not in entriesInLogs
+  entry.entryTerm = leader.currentTerm
+
+  // Changed state.
+  log' = log + (leader -> firstFreeLogIndex[leader] -> entry)
+
+  // Unchanged state.
+  Follower' = Follower
+  Candidate' = Candidate
+  Leader' = Leader
+  currentTerm' = currentTerm
+  votedFor' = votedFor
+  votesGranted' = votesGranted
+  votesResponded' = votesResponded
+  InFlight' = InFlight
+  nextIndex' = nextIndex
+  matchIndex' = matchIndex
+  commitIndex' = commitIndex
+}
+
+// A leader sends AppendEntries to one peer. The request carries the previous log
+// metadata for the peer's next index and at most one entry.
+pred sendAppendEntriesRequest[leader, other: Node, request: AppendEntriesRequest] {
+  leader in Leader
+  other != leader
+  some leader.nextIndex[other]
+  fresh[request]
+
+  request.source = leader
+  request.dest = other
+  request.messageTerm = leader.currentTerm
+  request.prevLogIndex = leader.nextIndex[other].(indexOrd/prev)
+  request.prevLogTerm = request.prevLogIndex.(leader.log).entryTerm
+  request.appendEntryIndex = leader.nextIndex[other] & logIndexes[leader]
+  request.appendEntry = request.appendEntryIndex.(leader.log)
+  request.leaderCommit = leader.commitIndex
+
+  // Changed state.
+  InFlight' = InFlight + request
+
+  // Unchanged state.
+  Follower' = Follower
+  Candidate' = Candidate
+  Leader' = Leader
+  currentTerm' = currentTerm
+  votedFor' = votedFor
+  votesGranted' = votesGranted
+  votesResponded' = votesResponded
+  log' = log
+  nextIndex' = nextIndex
+  matchIndex' = matchIndex
+  commitIndex' = commitIndex
+}
+
+// A server handles AppendEntries by validating the previous-log metadata,
+// repairing conflicts, and replying with the replicated match index.
+pred handleAppendEntriesRequest[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
+  request in InFlight
+  request.dest = receiver
+  fresh[response]
+
+  response.source = receiver
+  response.dest = request.source
+
+  // First decide role and term effects. A higher-term RPC updates the receiver
+  // before log validation. A same-term AppendEntries from a leader moves the
+  // receiver to follower.
+  (
+    higherTermStepDown[receiver, request]
+    and response.messageTerm = request.messageTerm
+  ) or (
+    request.messageTerm = receiver.currentTerm
+    and receiver not in Follower
+    and Follower' = Follower + receiver
+    and Candidate' = Candidate - receiver
+    and Leader' = Leader - receiver
+    and currentTerm' = currentTerm
+    and response.messageTerm = receiver.currentTerm
+  ) or (
+    not termGt[request.messageTerm, receiver.currentTerm]
+    and (request.messageTerm != receiver.currentTerm or receiver in Follower)
+    and Follower' = Follower
+    and Candidate' = Candidate
+    and Leader' = Leader
+    and currentTerm' = currentTerm
+    and response.messageTerm = receiver.currentTerm
+  )
+
+  // Then decide whether the log portion of the request is accepted.
+  (
+    (
+      request.messageTerm != receiver.currentTerm'
+      or not prevLogMatches[receiver, request]
+    )
+    and response.appendSuccess = False
+    and no response.responseMatchIndex
+    and log' = log
+    and commitIndex' = commitIndex
+  ) or (
+    request.messageTerm = receiver.currentTerm'
+    and prevLogMatches[receiver, request]
+    and response.appendSuccess = True
+    and (
+      (
+        no request.appendEntryIndex
+        and no request.appendEntry
+        and response.responseMatchIndex = request.prevLogIndex
+        and log' = log
+      ) or (
+        some request.appendEntryIndex
+        and some request.appendEntry
+        and logEntry[receiver, request.appendEntryIndex].entryTerm = request.appendEntry.entryTerm
+        and response.responseMatchIndex = request.appendEntryIndex
+        and log' = log
+      ) or (
+        some request.appendEntryIndex
+        and some request.appendEntry
+        and some logEntry[receiver, request.appendEntryIndex]
+        and logEntry[receiver, request.appendEntryIndex].entryTerm != request.appendEntry.entryTerm
+        and response.responseMatchIndex = request.appendEntryIndex
+        and log' =
+          (log - (receiver -> indexesFrom[request.appendEntryIndex] -> Entry))
+          + (receiver -> request.appendEntryIndex -> request.appendEntry)
+      ) or (
+        some request.appendEntryIndex
+        and some request.appendEntry
+        and no logEntry[receiver, request.appendEntryIndex]
+        and request.appendEntryIndex = firstFreeLogIndex[receiver]
+        and response.responseMatchIndex = request.appendEntryIndex
+        and log' = log + (receiver -> request.appendEntryIndex -> request.appendEntry)
+      )
+    )
+    and followerCommitFromLeader[receiver, request]
+  )
+
+  // Changed state.
+  InFlight' = (InFlight - request) + response
+
+  // Unchanged state.
+  votedFor' = votedFor
+  votesGranted' = votesGranted
+  votesResponded' = votesResponded
+  nextIndex' = nextIndex
+  matchIndex' = matchIndex
+}
+
+// A leader handles AppendEntries responses by updating its view of follower
+// replication progress.
+pred handleAppendEntriesResponse[leader: Node, response: AppendEntriesResponse] {
+  leader in Leader
+  response in InFlight
+  response.dest = leader
+  response.messageTerm = leader.currentTerm
+
+  // Changed state.
+  (
+    response.appendSuccess = True
+    and some response.responseMatchIndex
+    and matchIndex' =
+      (matchIndex - (leader -> response.source -> Index))
+      + (leader -> response.source -> response.responseMatchIndex)
+    and nextIndex' =
+      (nextIndex - (leader -> response.source -> Index))
+      + (leader -> response.source -> response.responseMatchIndex.(indexOrd/next))
+  ) or (
+    response.appendSuccess = True
+    and no response.responseMatchIndex
+    and matchIndex' = matchIndex
+    and nextIndex' = nextIndex
+  ) or (
+    response.appendSuccess = False
+    and some leader.nextIndex[response.source]
+    and matchIndex' = matchIndex
+    and nextIndex' =
+      (nextIndex - (leader -> response.source -> Index))
+      + (leader -> response.source -> decrementIndex[leader.nextIndex[response.source]])
+  ) or (
+    response.appendSuccess = False
+    and no leader.nextIndex[response.source]
+    and matchIndex' = matchIndex
+    and nextIndex' = nextIndex
+  )
+
+  // Processing the response consumes it from the network.
+  InFlight' = InFlight - response
+
+  // Unchanged state.
+  Follower' = Follower
+  Candidate' = Candidate
+  Leader' = Leader
+  currentTerm' = currentTerm
+  votedFor' = votedFor
+  votesGranted' = votesGranted
+  votesResponded' = votesResponded
+  log' = log
+  commitIndex' = commitIndex
+}
+
+// A leader advances its commit index once a quorum has replicated an entry from
+// the leader's current term.
+pred advanceCommitIndex[leader: Node, newCommitIndex: Index] {
+  leader in Leader
+  newCommitIndex in logIndexes[leader]
+  logEntry[leader, newCommitIndex].entryTerm = leader.currentTerm
+  quorumAgreesThrough[leader, newCommitIndex]
+  no leader.commitIndex or indexGt[newCommitIndex, leader.commitIndex]
+
+  // Changed state.
+  commitIndex' =
+    (commitIndex - (leader -> Index)) + (leader -> newCommitIndex)
+
+  // Unchanged state.
+  Follower' = Follower
+  Candidate' = Candidate
+  Leader' = Leader
+  currentTerm' = currentTerm
+  votedFor' = votedFor
+  votesGranted' = votesGranted
+  votesResponded' = votesResponded
+  InFlight' = InFlight
+  log' = log
+  nextIndex' = nextIndex
+  matchIndex' = matchIndex
 }
 
 // A no-op transition to allow for lasso traces.
@@ -281,7 +817,12 @@ pred stutter {
   currentTerm' = currentTerm
   votedFor' = votedFor
   votesGranted' = votesGranted
+  votesResponded' = votesResponded
   InFlight' = InFlight
+  log' = log
+  nextIndex' = nextIndex
+  matchIndex' = matchIndex
+  commitIndex' = commitIndex
 }
 
 // Temporal behavior for the current scaffold.
@@ -296,158 +837,24 @@ fact traces {
       handleRequestVoteRequest[receiver, request, response]
     or some candidate: Node, response: RequestVoteResponse |
       handleRequestVoteResponse[candidate, response]
+    or some receiver: Node, response: Message |
+      dropStaleResponse[receiver, response]
+    or some message: Message |
+      dropMessage[message]
+    or some message, duplicate: Message |
+      duplicateMessage[message, duplicate]
     or some candidate: Node | becomeLeader[candidate]
+    or some leader: Node, entry: Entry | clientAppend[leader, entry]
+    or some leader, other: Node, request: AppendEntriesRequest |
+      sendAppendEntriesRequest[leader, other, request]
+    or some receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse |
+      handleAppendEntriesRequest[receiver, request, response]
+    or some leader: Node, response: AppendEntriesResponse |
+      handleAppendEntriesResponse[leader, response]
+    or some leader: Node, newCommitIndex: Index |
+      advanceCommitIndex[leader, newCommitIndex]
   )
 }
 
-run voteExchangeTrace {
-  #Node = 5
-  #Term >= 2
-  eventually some RequestVoteRequest & InFlight
-  eventually some RequestVoteResponse & InFlight
-  eventually some votesGranted
-} for 5 Node, 6 Term, 4 Message
-
-// With 5 nodes, a candidate already has its self-vote, so it needs 2 more
-// votes to reach a majority of 3. Because message fields are immutable, each
-// remote vote needs its own RequestVoteRequest atom and its own
-// RequestVoteResponse atom, so 4 Message atoms are enough for this scope.
-run leaderTrace {
-  #Node = 5
-  #Term >= 2
-  eventually some Leader
-} for 5 Node, 6 Term, 4 Message
-
-// Safety: any newly elected leader must already have a quorum of granted votes.
-assert LeadersRequireMajority {
-  always all n: Node |
-    (n not in Leader and after n in Leader) implies
-      after hasMajority[n.votesGranted]
-}
-
-// Safety: becoming leader does not also change the node's current term.
-assert LeadersKeepTheirElectionTerm {
-  always all n: Node |
-    (n not in Leader and n in Leader') implies n.currentTerm' = n.currentTerm
-}
-
-// Safety: a node may only remain leader while its term is unchanged.
-assert LeadersStepDownBeforeTermChange {
-  always all n: Node |
-    (n in Leader and n.currentTerm' != n.currentTerm) implies n not in Leader'
-}
-
-// Safety: handling a higher-term vote request forces the receiver out of
-// candidate/leader state and back to follower.
-assert HigherTermRequestForcesStepDown {
-  always all receiver: Node, request: RequestVoteRequest, response: RequestVoteResponse |
-    (handleRequestVoteRequest[receiver, request, response]
-      and termGt[request.messageTerm, receiver.currentTerm]) implies
-        (receiver in Follower'
-         and receiver not in Candidate'
-         and receiver not in Leader')
-}
-
-// Safety: once a node records a vote for a term, that vote never changes.
-assert OneVotePerNodePerTerm {
-  always all n: Node, t: Term |
-    some n.votedFor[t] implies n.votedFor'[t] = n.votedFor[t]
-}
-
-// Safety: there is never more than one leader in the same term.
-assert AtMostOneLeaderPerTerm {
-  always all t: Term | lone { n: Leader | n.currentTerm = t }
-}
-
-check RolePartition for 5 Node, 6 Term, 4 Message
-check LeadersRequireMajority for 5 Node, 6 Term, 4 Message
-check LeadersKeepTheirElectionTerm for 5 Node, 6 Term, 4 Message
-check LeadersStepDownBeforeTermChange for 5 Node, 6 Term, 4 Message
-check HigherTermRequestForcesStepDown for 5 Node, 6 Term, 4 Message
-check OneVotePerNodePerTerm for 5 Node, 6 Term, 4 Message
-check AtMostOneLeaderPerTerm for 5 Node, 6 Term, 4 Message
 
 
-// Visualizer-only event tags.
-// These are not part of the protocol state; they exist so the Alloy visualizer
-// can show which transition fired in a given step.
-enum Event {
-  TimeoutEvent,
-  SendRequestVoteRequestEvent,
-  HandleRequestVoteRequestEvent,
-  HandleRequestVoteResponseEvent,
-  StutterEvent
-}
-
-// Visualization helpers.
-//
-// These functions are parameterless on purpose so the Alloy visualizer exposes
-// them as derived relations. They do not affect solving; they only make traces
-// easier to inspect.
-
-// Direct network edges for in-flight vote requests.
-fun inFlightRequestEdges : Node -> Node {
-  { s, d : Node |
-    some req : RequestVoteRequest & InFlight |
-      req.source = s and req.dest = d
-  }
-}
-
-// Direct network edges for in-flight granted vote responses.
-fun inFlightGrantedResponseEdges : Node -> Node {
-  { s, d : Node |
-    some resp : RequestVoteResponse & InFlight |
-      resp.source = s and resp.dest = d and resp.voteGranted = True
-  }
-}
-
-// Direct network edges for in-flight denied vote responses.
-fun inFlightDeniedResponseEdges : Node -> Node {
-  { s, d : Node |
-    some resp : RequestVoteResponse & InFlight |
-      resp.source = s and resp.dest = d and resp.voteGranted = False
-  }
-}
-
-// The current votes a candidate has accumulated.
-fun grantedVoteEdges : Node -> Node {
-  votesGranted
-}
-
-// Which transition fired in the current step, with its main node arguments.
-fun timeout_happens : Event -> Node {
-  { e : TimeoutEvent, n : Node | timeout[n] }
-}
-
-fun send_request_vote_request_happens : Event -> Node -> Node {
-  { e : SendRequestVoteRequestEvent, c, o : Node |
-    some req : RequestVoteRequest | sendRequestVoteRequest[c, o, req]
-  }
-}
-
-fun handle_request_vote_request_happens : Event -> Node -> Node {
-  { e : HandleRequestVoteRequestEvent, r, s : Node |
-    some req : RequestVoteRequest, resp : RequestVoteResponse |
-      req.source = s and handleRequestVoteRequest[r, req, resp]
-  }
-}
-
-fun handle_request_vote_response_happens : Event -> Node -> Node {
-  { e : HandleRequestVoteResponseEvent, c, s : Node |
-    some resp : RequestVoteResponse |
-      resp.source = s and handleRequestVoteResponse[c, resp]
-  }
-}
-
-fun stutter_happens : set Event {
-  { e : StutterEvent | stutter }
-}
-
-// The set of events visible in the current step.
-fun events : set Event {
-  timeout_happens.Node +
-  send_request_vote_request_happens.Node.Node +
-  handle_request_vote_request_happens.Node.Node +
-  handle_request_vote_response_happens.Node.Node +
-  stutter_happens
-}
