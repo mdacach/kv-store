@@ -53,7 +53,10 @@ abstract sig Message {
 var sig InFlight in Message {}
 
 // A candidate asks another node for a vote.
-sig RequestVoteRequest extends Message {}
+sig RequestVoteRequest extends Message {
+  candidateLastLogIndex: lone Index,
+  candidateLastLogTerm: lone Term
+}
 
 // A node replies to a vote request.
 sig RequestVoteResponse extends Message {
@@ -74,6 +77,10 @@ pred fresh[m: Message] {
 // Helper predicates for comparing finite ordered terms.
 pred termGt[t1, t2: Term] {
   t1 in t2.^(termOrd/next)
+}
+
+pred indexGte[i1, i2: Index] {
+  i1 = i2 or i1 in i2.^(indexOrd/next)
 }
 
 // A set of votes is a quorum when it is a strict majority of the cluster.
@@ -101,6 +108,24 @@ fun lastLogIndex[n: Node] : lone Index {
 // The term of the last log entry for a node, if its log is non-empty.
 fun lastLogTerm[n: Node] : lone Term {
   logEntry[n, lastLogIndex[n]].term
+}
+
+// Raft's log freshness rule for RequestVote. A candidate is at least as
+// up-to-date as the receiver when its last log term is newer, or when terms are
+// equal and its last log index is at least as large.
+pred logUpToDate[candidateLastIndex: lone Index, candidateLastTerm: lone Term, receiver: Node] {
+  no lastLogTerm[receiver]
+  or (
+    some candidateLastTerm
+    and (
+      termGt[candidateLastTerm, lastLogTerm[receiver]]
+      or (
+        candidateLastTerm = lastLogTerm[receiver]
+        and some candidateLastIndex
+        and indexGte[candidateLastIndex, lastLogIndex[receiver]]
+      )
+    )
+  )
 }
 
 // Initial state for the leader-election model.
@@ -164,6 +189,8 @@ pred sendRequestVoteRequest[candidate, other: Node, request: RequestVoteRequest]
   request.source = candidate
   request.dest = other
   request.messageTerm = candidate.currentTerm
+  request.candidateLastLogIndex = lastLogIndex[candidate]
+  request.candidateLastLogTerm = lastLogTerm[candidate]
 
   // Changed state.
   // The new message becomes in-flight.
@@ -192,20 +219,27 @@ pred higherTermRequestStepDown[receiver: Node, request: RequestVoteRequest, resp
   response.messageTerm = request.messageTerm
 }
 
-// A vote request is granted when it matches the receiver's effective current
-// term and the receiver has not voted for a different node in that term.
+// A vote request is granted when:
+// 1. the request term matches the receiver's effective current term,
+// 2. the receiver has not voted for a different node in that term, and
+// 3. the candidate's log is at least as up-to-date as the receiver's log.
 pred grantRequestVote[receiver: Node, request: RequestVoteRequest, response: RequestVoteResponse] {
   request.messageTerm = receiver.currentTerm'
   receiver.votedFor[request.messageTerm] in none + request.source
+  logUpToDate[request.candidateLastLogIndex, request.candidateLastLogTerm, receiver]
 
   votedFor' = votedFor + (receiver -> request.messageTerm -> request.source)
   response.voteGranted = True
 }
 
-// All other RequestVoteRequest cases are denied.
+// All other RequestVoteRequest cases are denied:
+// 1. the request term is stale or otherwise not the receiver's effective term,
+// 2. the receiver already voted for a different node in that term, or
+// 3. the candidate's log is stale relative to the receiver's log.
 pred denyRequestVote[receiver: Node, request: RequestVoteRequest, response: RequestVoteResponse] {
   request.messageTerm != receiver.currentTerm'
   or receiver.votedFor[request.messageTerm] not in none + request.source
+  or not logUpToDate[request.candidateLastLogIndex, request.candidateLastLogTerm, receiver]
 
   votedFor' = votedFor
   response.voteGranted = False
