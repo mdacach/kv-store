@@ -51,6 +51,12 @@ assert AtMostOneLeaderPerTerm {
   always all t: Term | lone { n: Leader | n.currentTerm = t }
 }
 
+// Safety: granted votes are a subset of the peers the candidate requested votes
+// from. Self-votes count as requested in this model.
+assert VotesGrantedSubsetVotesRequested {
+  always all n: Node | n.votesGranted in n.votesRequested
+}
+
 // Safety: any granted vote is only granted to a candidate whose log metadata is
 // at least as up-to-date as the receiver's log.
 assert GrantedVotesRequireUpToDateLog {
@@ -73,5 +79,6 @@ check LeadersStepDownBeforeTermChange for 5 Node, 6 Term, 4 Message
 check HigherTermRequestForcesStepDown for 5 Node, 6 Term, 4 Message
 check OneVotePerNodePerTerm for 5 Node, 6 Term, 4 Message
 check AtMostOneLeaderPerTerm for 5 Node, 6 Term, 4 Message
+check VotesGrantedSubsetVotesRequested for 5 Node, 6 Term, 4 Message
 check GrantedVotesRequireUpToDateLog for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value
 check LogsAreContiguous for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value
