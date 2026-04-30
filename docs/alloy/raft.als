@@ -117,9 +117,9 @@ fun lastLogIndex[n: Node] : lone Index {
   }
 }
 
-// The term of the last log entry for a node, if its log is non-empty.
-fun lastLogTerm[n: Node] : lone Term {
-  logEntry[n, lastLogIndex[n]].term
+// Entries currently present in any node log.
+fun entriesInLogs : set LogEntry {
+  Index.(Node.log)
 }
 
 // First unoccupied log index after a node's contiguous log prefix, if one is
@@ -135,18 +135,20 @@ fun firstFreeLogIndex[n: Node] : lone Index {
 // up-to-date as the receiver when its last log term is newer, or when terms are
 // equal and its last log index is at least as large.
 pred logUpToDate[candidateLastIndex: lone Index, candidateLastTerm: lone Term, receiver: Node] {
-  no lastLogTerm[receiver]
-  or (
-    some candidateLastTerm
-    and (
-      termGt[candidateLastTerm, lastLogTerm[receiver]]
-      or (
-        candidateLastTerm = lastLogTerm[receiver]
-        and some candidateLastIndex
-        and indexGte[candidateLastIndex, lastLogIndex[receiver]]
+  let receiverLastIndex = lastLogIndex[receiver],
+      receiverLastTerm = logEntry[receiver, receiverLastIndex].term |
+    no receiverLastTerm
+    or (
+      some candidateLastTerm
+      and (
+        termGt[candidateLastTerm, receiverLastTerm]
+        or (
+          candidateLastTerm = receiverLastTerm
+          and some candidateLastIndex
+          and indexGte[candidateLastIndex, receiverLastIndex]
+        )
       )
     )
-  )
 }
 
 // Initial state for the leader-election model.
@@ -220,8 +222,10 @@ pred sendRequestVoteRequest[candidate, other: Node, request: RequestVoteRequest]
   request.source = candidate
   request.dest = other
   request.messageTerm = candidate.currentTerm
-  request.candidateLastLogIndex = lastLogIndex[candidate]
-  request.candidateLastLogTerm = lastLogTerm[candidate]
+  let candidateLastIndex = lastLogIndex[candidate] {
+    request.candidateLastLogIndex = candidateLastIndex
+    request.candidateLastLogTerm = logEntry[candidate, candidateLastIndex].term
+  }
 
   // Changed state.
   // The new message becomes in-flight.
@@ -390,6 +394,33 @@ pred becomeLeader[candidate: Node] {
   matchIndex' = matchIndex
 }
 
+// A leader receives a new entry and appends it to its local log.
+pred clientAppend[leader: Node, entry: LogEntry] {
+  leader in Leader
+  let nextLogIndex = firstFreeLogIndex[leader] {
+    some nextLogIndex
+    // Client appends create a fresh log entry. Later replication transitions may
+    // copy an existing leader entry into follower logs.
+    entry not in entriesInLogs
+    entry.term = leader.currentTerm
+
+    // Changed state.
+    log' = log + (leader -> nextLogIndex -> entry)
+
+    // Unchanged state.
+    Follower' = Follower
+    Candidate' = Candidate
+    Leader' = Leader
+    currentTerm' = currentTerm
+    votedFor' = votedFor
+    votesGranted' = votesGranted
+    votesRequested' = votesRequested
+    InFlight' = InFlight
+    nextIndex' = nextIndex
+    matchIndex' = matchIndex
+  }
+}
+
 // A no-op transition to allow for lasso traces.
 pred stutter {
   // No state changes.
@@ -419,5 +450,6 @@ fact traces {
     or some candidate: Node, response: RequestVoteResponse |
       handleRequestVoteResponse[candidate, response]
     or some candidate: Node | becomeLeader[candidate]
+    or some leader: Node, entry: LogEntry | clientAppend[leader, entry]
   )
 }
