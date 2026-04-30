@@ -8,16 +8,6 @@ sig Node {
   var currentTerm: one Term,
   // Persistent voting history for each term.
   var votedFor: Term -> lone Node,
-  // Servers from which this node has received a granted vote in its current term.
-  //
-  // In the current model this set is only meaningful while the node is a
-  // candidate. Outside candidate state it may contain stale bookkeeping left
-  // over from an earlier election, but no transition consults it there.
-  var votesGranted: set Node,
-  // Servers this candidate has already asked for a vote in its current term.
-  // Because this model records a self-vote during timeout, the candidate is
-  // also recorded here at the start of an election.
-  var votesRequested: set Node,
   // Persistent log entries keyed by bounded log index.
   var log: Index -> lone LogEntry
 }
@@ -71,7 +61,19 @@ sig RequestVoteResponse extends Message {
 abstract sig Bool {}
 one sig True, False extends Bool {}
 
-var sig Follower, Candidate, Leader in Node {}
+var sig Follower in Node {}
+
+var sig Candidate in Node {
+  // Servers from which this candidate has received a granted vote in its
+  // current term.
+  var votesGranted: set Node,
+  // Servers this candidate has already asked for a vote in its current term.
+  // Because this model records a self-vote during timeout, the candidate is
+  // also recorded here at the start of an election.
+  var votesRequested: set Node
+}
+
+var sig Leader in Node {}
 
 // Messages used in a transition must be outside the network before that step.
 pred fresh[m: Message] {
@@ -299,9 +301,10 @@ pred handleRequestVoteRequest[receiver: Node, request: RequestVoteRequest, respo
   // Handling a request consumes the request message and creates the response.
   InFlight' = (InFlight - request) + response
 
-  // Unchanged state.
-  votesGranted' = votesGranted
-  votesRequested' = votesRequested
+  // If the receiver stepped down from candidate state, its candidate-only
+  // election bookkeeping disappears with that role.
+  votesGranted' = votesGranted - ((Candidate - Candidate') -> Node)
+  votesRequested' = votesRequested - ((Candidate - Candidate') -> Node)
   log' = log
 }
 
@@ -352,8 +355,8 @@ pred becomeLeader[candidate: Node] {
   Follower' = Follower
   currentTerm' = currentTerm
   votedFor' = votedFor
-  votesGranted' = votesGranted
-  votesRequested' = votesRequested
+  votesGranted' = votesGranted - (candidate -> Node)
+  votesRequested' = votesRequested - (candidate -> Node)
   InFlight' = InFlight
   log' = log
 }

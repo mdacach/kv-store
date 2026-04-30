@@ -14,7 +14,7 @@ assert RolePartition {
 assert LeadersRequireMajority {
   always all n: Node |
     (n not in Leader and after n in Leader) implies
-      after hasMajority[n.votesGranted]
+      (n in Candidate and hasMajority[n.votesGranted])
 }
 
 // Safety: becoming leader does not also change the node's current term.
@@ -54,7 +54,7 @@ assert AtMostOneLeaderPerTerm {
 // Safety: granted votes are a subset of the peers the candidate requested votes
 // from. Self-votes count as requested in this model.
 assert VotesGrantedSubsetVotesRequested {
-  always all n: Node | n.votesGranted in n.votesRequested
+  always all n: Candidate | n.votesGranted in n.votesRequested
 }
 
 // Safety: any granted vote is only granted to a candidate whose log metadata is
