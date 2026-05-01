@@ -570,16 +570,6 @@ pred appendEntriesRoleTermEffect[receiver: Node, request: AppendEntriesRequest, 
   )
 }
 
-// Rejects the AppendEntries log portion when the effective term is wrong or the
-// request's previous-log metadata does not match the receiver's current log.
-pred rejectAppendEntriesLog[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
-  request.messageTerm != receiver.currentTerm' or not prevLogMatches[receiver, request]
-
-  response.appendSuccess = False
-  no response.responseMatchIndex
-  unchangedLog
-}
-
 // Accepts an empty AppendEntries request. This is a heartbeat, or a request that
 // proves only the previous-log index already matches.
 pred acceptAppendEntriesHeartbeat[request: AppendEntriesRequest, response: AppendEntriesResponse] {
@@ -626,44 +616,16 @@ pred appendAppendEntriesNewEntry[receiver: Node, request: AppendEntriesRequest, 
   log' = log + (receiver -> request.appendEntryIndex -> request.appendEntry)
 }
 
-// Accepts the AppendEntries log portion once the request term and previous-log
-// metadata match, then applies the appropriate heartbeat/entry case.
-pred acceptAppendEntriesLog[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
-  request.messageTerm = receiver.currentTerm'
-  prevLogMatches[receiver, request]
-  response.appendSuccess = True
-
-  (
-    acceptAppendEntriesHeartbeat[request, response]
-    or acceptAppendEntriesExistingEntry[receiver, request, response]
-    or replaceAppendEntriesConflictingEntry[receiver, request, response]
-    or appendAppendEntriesNewEntry[receiver, request, response]
-  )
-}
-
-// Applies exactly one AppendEntries log effect after role/term effects have
-// established the receiver's effective current term.
-pred appendEntriesLogEffect[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
-  (
-    rejectAppendEntriesLog[receiver, request, response]
-    or acceptAppendEntriesLog[receiver, request, response]
-  )
-}
-
-// A server handles AppendEntries by validating the previous-log metadata,
-// repairing conflicts, and replying with the replicated match index.
-pred handleAppendEntriesRequest[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
+pred appendEntriesRequestGuard[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
   request in InFlight
   request.dest = receiver
   fresh[response]
 
   response.source = receiver
   response.dest = request.source
+}
 
-  appendEntriesRoleTermEffect[receiver, request, response]
-  appendEntriesLogEffect[receiver, request, response]
-
-  // Changed state.
+pred finishAppendEntriesRequest[request: AppendEntriesRequest, response: AppendEntriesResponse] {
   InFlight' = (InFlight - request) + response
 
   // If the receiver stepped down from candidate or leader state, its
@@ -671,6 +633,91 @@ pred handleAppendEntriesRequest[receiver: Node, request: AppendEntriesRequest, r
   votedFor' = votedFor
   clearInactiveCandidateBookkeeping
   clearInactiveLeaderBookkeeping
+}
+
+pred rejectStaleAppendEntriesRequest[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
+  appendEntriesRequestGuard[receiver, request, response]
+
+  termGt[receiver.currentTerm, request.messageTerm]
+  appendEntriesRoleTermUnchanged[receiver, request, response]
+
+  response.appendSuccess = False
+  no response.responseMatchIndex
+  unchangedLog
+  finishAppendEntriesRequest[request, response]
+}
+
+pred rejectAppendEntriesPrevMismatch[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
+  appendEntriesRequestGuard[receiver, request, response]
+
+  appendEntriesRoleTermEffect[receiver, request, response]
+  request.messageTerm = receiver.currentTerm'
+  not prevLogMatches[receiver, request]
+
+  response.appendSuccess = False
+  no response.responseMatchIndex
+  unchangedLog
+  finishAppendEntriesRequest[request, response]
+}
+
+pred acceptAppendEntriesHeartbeatRequest[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
+  appendEntriesRequestGuard[receiver, request, response]
+
+  appendEntriesRoleTermEffect[receiver, request, response]
+  request.messageTerm = receiver.currentTerm'
+  prevLogMatches[receiver, request]
+  response.appendSuccess = True
+  acceptAppendEntriesHeartbeat[request, response]
+
+  finishAppendEntriesRequest[request, response]
+}
+
+pred acceptAppendEntriesExistingEntryRequest[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
+  appendEntriesRequestGuard[receiver, request, response]
+
+  appendEntriesRoleTermEffect[receiver, request, response]
+  request.messageTerm = receiver.currentTerm'
+  prevLogMatches[receiver, request]
+  response.appendSuccess = True
+  acceptAppendEntriesExistingEntry[receiver, request, response]
+
+  finishAppendEntriesRequest[request, response]
+}
+
+pred replaceAppendEntriesConflictRequest[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
+  appendEntriesRequestGuard[receiver, request, response]
+
+  appendEntriesRoleTermEffect[receiver, request, response]
+  request.messageTerm = receiver.currentTerm'
+  prevLogMatches[receiver, request]
+  response.appendSuccess = True
+  replaceAppendEntriesConflictingEntry[receiver, request, response]
+
+  finishAppendEntriesRequest[request, response]
+}
+
+pred appendAppendEntriesNewEntryRequest[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
+  appendEntriesRequestGuard[receiver, request, response]
+
+  appendEntriesRoleTermEffect[receiver, request, response]
+  request.messageTerm = receiver.currentTerm'
+  prevLogMatches[receiver, request]
+  response.appendSuccess = True
+  appendAppendEntriesNewEntry[receiver, request, response]
+
+  finishAppendEntriesRequest[request, response]
+}
+
+// A server handles AppendEntries by selecting one complete request-handling
+// case. Each case includes the guard, role/term effect, log result, response,
+// network update, and frames.
+pred handleAppendEntriesRequest[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
+  rejectStaleAppendEntriesRequest[receiver, request, response]
+  or rejectAppendEntriesPrevMismatch[receiver, request, response]
+  or acceptAppendEntriesHeartbeatRequest[receiver, request, response]
+  or acceptAppendEntriesExistingEntryRequest[receiver, request, response]
+  or replaceAppendEntriesConflictRequest[receiver, request, response]
+  or appendAppendEntriesNewEntryRequest[receiver, request, response]
 }
 
 // Election-related protocol actions.
