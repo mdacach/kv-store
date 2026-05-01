@@ -1,5 +1,5 @@
 module safety
-open visualization
+open raft
 open util/ordering[Index] as indexOrd
 
 // Safety property: every node should always be in exactly one Raft role.
@@ -72,6 +72,15 @@ assert LeaderAppendOnly {
       i.(n.log') = i.(n.log)
 }
 
+// Safety: successful AppendEntries handling only succeeds when the previous-log
+// metadata matched the receiver log before the request was applied.
+assert SuccessfulAppendEntriesRequiresPrevLogMatch {
+  always all receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse |
+    (handleAppendEntriesRequest[receiver, request, response]
+      and response.appendSuccess = True) implies
+        prevLogMatches[receiver, request]
+}
+
 // Safety: any granted vote is only granted to a candidate whose log metadata is
 // at least as up-to-date as the receiver's log.
 assert GrantedVotesRequireUpToDateLog {
@@ -87,15 +96,16 @@ assert LogsAreContiguous {
     i.*(indexOrd/prev) in logIndexes[n]
 }
 
-check RolePartition for 5 Node, 6 Term, 4 Message
-check LeadersRequireMajority for 5 Node, 6 Term, 4 Message
-check LeadersKeepTheirElectionTerm for 5 Node, 6 Term, 4 Message
-check LeadersStepDownBeforeTermChange for 5 Node, 6 Term, 4 Message
-check HigherTermRequestForcesStepDown for 5 Node, 6 Term, 4 Message
-check OneVotePerNodePerTerm for 5 Node, 6 Term, 4 Message
-check AtMostOneLeaderPerTerm for 5 Node, 6 Term, 4 Message
-check VotesGrantedSubsetVotesRequested for 5 Node, 6 Term, 4 Message
+check RolePartition for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value
+check LeadersRequireMajority for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value
+check LeadersKeepTheirElectionTerm for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value
+check LeadersStepDownBeforeTermChange for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value
+check HigherTermRequestForcesStepDown for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value
+check OneVotePerNodePerTerm for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value
+check AtMostOneLeaderPerTerm for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value
+check VotesGrantedSubsetVotesRequested for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value
 check LeaderMatchIndexWithinLog for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value
 check LeaderAppendOnly for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value
+check SuccessfulAppendEntriesRequiresPrevLogMatch for 5 Node, 6 Term, 5 Message, 4 Index, 4 LogEntry, 2 Value
 check GrantedVotesRequireUpToDateLog for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value
 check LogsAreContiguous for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value

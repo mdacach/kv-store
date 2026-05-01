@@ -505,6 +505,157 @@ pred sendAppendEntriesRequest[leader, other: Node, request: AppendEntriesRequest
   matchIndex' = matchIndex
 }
 
+// A higher-term AppendEntries request has the same term effect as any other
+// higher-term RPC: the receiver adopts the term and steps down before handling
+// the request payload.
+pred appendEntriesHigherTermRoleEffect[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
+  higherTermStepDown[receiver, request]
+  response.messageTerm = request.messageTerm
+}
+
+// A same-term AppendEntries from the current leader forces a candidate or old
+// leader back to follower without changing the receiver's term.
+pred appendEntriesSameTermStepDown[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
+  request.messageTerm = receiver.currentTerm
+  receiver not in Follower
+
+  Follower' = Follower + receiver
+  Candidate' = Candidate - receiver
+  Leader' = Leader - receiver
+  currentTerm' = currentTerm
+  response.messageTerm = receiver.currentTerm
+}
+
+// AppendEntries leaves role and term state unchanged when the request is stale,
+// or when the request is same-term and the receiver is already a follower.
+pred appendEntriesRoleTermUnchanged[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
+  // This is the remaining non-higher-term case: either the request is stale, or
+  // it is same-term and the receiver is already a follower. A plain
+  // `not termGte[...]` would lose the same-term follower case.
+  not termGt[request.messageTerm, receiver.currentTerm]
+  (request.messageTerm != receiver.currentTerm or receiver in Follower)
+
+  Follower' = Follower
+  Candidate' = Candidate
+  Leader' = Leader
+  currentTerm' = currentTerm
+  response.messageTerm = receiver.currentTerm
+}
+
+// Applies exactly one AppendEntries role/term case before log validation.
+pred appendEntriesRoleTermEffect[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
+  (
+    appendEntriesHigherTermRoleEffect[receiver, request, response]
+    or appendEntriesSameTermStepDown[receiver, request, response]
+    or appendEntriesRoleTermUnchanged[receiver, request, response]
+  )
+}
+
+// Rejects the AppendEntries log portion when the effective term is wrong or the
+// request's previous-log metadata does not match the receiver's current log.
+pred rejectAppendEntriesLog[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
+  request.messageTerm != receiver.currentTerm' or not prevLogMatches[receiver, request]
+
+  response.appendSuccess = False
+  no response.responseMatchIndex
+  log' = log
+}
+
+// Accepts an empty AppendEntries request. This is a heartbeat, or a request that
+// proves only the previous-log index already matches.
+pred acceptAppendEntriesHeartbeat[request: AppendEntriesRequest, response: AppendEntriesResponse] {
+  no request.appendEntryIndex
+  no request.appendEntry
+  response.responseMatchIndex = request.prevLogIndex
+  log' = log
+}
+
+// Accepts an AppendEntries request whose entry already exists at the receiver
+// with the same term, leaving the log unchanged.
+pred acceptAppendEntriesExistingEntry[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
+  some request.appendEntryIndex
+  some request.appendEntry
+  logEntry[receiver, request.appendEntryIndex].term = request.appendEntry.term
+
+  response.responseMatchIndex = request.appendEntryIndex
+  log' = log
+}
+
+// Repairs a conflicting receiver log entry by deleting the conflicting suffix
+// and writing the leader's entry at the requested index.
+pred replaceAppendEntriesConflictingEntry[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
+  some request.appendEntryIndex
+  some request.appendEntry
+  some logEntry[receiver, request.appendEntryIndex]
+  logEntry[receiver, request.appendEntryIndex].term != request.appendEntry.term
+
+  response.responseMatchIndex = request.appendEntryIndex
+  log' =
+    (log - (receiver -> indexesFrom[request.appendEntryIndex] -> LogEntry))
+    + (receiver -> request.appendEntryIndex -> request.appendEntry)
+}
+
+// Appends the leader's entry when the receiver is missing that index and the
+// index is exactly the next position in the receiver's contiguous log prefix.
+pred appendAppendEntriesNewEntry[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
+  some request.appendEntryIndex
+  some request.appendEntry
+  no logEntry[receiver, request.appendEntryIndex]
+  request.appendEntryIndex = firstFreeLogIndex[receiver]
+
+  response.responseMatchIndex = request.appendEntryIndex
+  log' = log + (receiver -> request.appendEntryIndex -> request.appendEntry)
+}
+
+// Accepts the AppendEntries log portion once the request term and previous-log
+// metadata match, then applies the appropriate heartbeat/entry case.
+pred acceptAppendEntriesLog[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
+  request.messageTerm = receiver.currentTerm'
+  prevLogMatches[receiver, request]
+  response.appendSuccess = True
+
+  (
+    acceptAppendEntriesHeartbeat[request, response]
+    or acceptAppendEntriesExistingEntry[receiver, request, response]
+    or replaceAppendEntriesConflictingEntry[receiver, request, response]
+    or appendAppendEntriesNewEntry[receiver, request, response]
+  )
+}
+
+// Applies exactly one AppendEntries log effect after role/term effects have
+// established the receiver's effective current term.
+pred appendEntriesLogEffect[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
+  (
+    rejectAppendEntriesLog[receiver, request, response]
+    or acceptAppendEntriesLog[receiver, request, response]
+  )
+}
+
+// A server handles AppendEntries by validating the previous-log metadata,
+// repairing conflicts, and replying with the replicated match index.
+pred handleAppendEntriesRequest[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
+  request in InFlight
+  request.dest = receiver
+  fresh[response]
+
+  response.source = receiver
+  response.dest = request.source
+
+  appendEntriesRoleTermEffect[receiver, request, response]
+  appendEntriesLogEffect[receiver, request, response]
+
+  // Changed state.
+  InFlight' = (InFlight - request) + response
+
+  // If the receiver stepped down from candidate or leader state, its
+  // role-specific bookkeeping disappears with that role.
+  votedFor' = votedFor
+  votesGranted' = votesGranted - ((Candidate - Candidate') -> Node)
+  votesResponded' = votesResponded - ((Candidate - Candidate') -> Node)
+  nextIndex' = nextIndex - ((Leader - Leader') -> Node -> Index)
+  matchIndex' = matchIndex - ((Leader - Leader') -> Node -> Index)
+}
+
 // A no-op transition to allow for lasso traces.
 pred stutter {
   // No state changes.
@@ -537,5 +688,7 @@ fact traces {
     or some leader: Node, entry: LogEntry | clientAppend[leader, entry]
     or some leader, other: Node, request: AppendEntriesRequest |
       sendAppendEntriesRequest[leader, other, request]
+    or some receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse |
+      handleAppendEntriesRequest[receiver, request, response]
   )
 }

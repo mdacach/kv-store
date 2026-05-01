@@ -12,6 +12,7 @@ enum Event {
   BecomeLeaderEvent,
   ClientAppendEvent,
   SendAppendEntriesRequestEvent,
+  HandleAppendEntriesRequestEvent,
   StutterEvent
 }
 
@@ -50,6 +51,22 @@ fun inFlightAppendEntriesRequestEdges : Node -> Node {
   { s, d : Node |
     some req : AppendEntriesRequest & InFlight |
       req.source = s and req.dest = d
+  }
+}
+
+// Direct network edges for in-flight successful AppendEntries responses.
+fun inFlightAppendEntriesSuccessResponseEdges : Node -> Node {
+  { s, d : Node |
+    some resp : AppendEntriesResponse & InFlight |
+      resp.source = s and resp.dest = d and resp.appendSuccess = True
+  }
+}
+
+// Direct network edges for in-flight failed AppendEntries responses.
+fun inFlightAppendEntriesFailureResponseEdges : Node -> Node {
+  { s, d : Node |
+    some resp : AppendEntriesResponse & InFlight |
+      resp.source = s and resp.dest = d and resp.appendSuccess = False
   }
 }
 
@@ -99,6 +116,13 @@ fun send_append_entries_request_happens : Event -> Node -> Node {
   }
 }
 
+fun handle_append_entries_request_happens : Event -> Node -> Node {
+  { e : HandleAppendEntriesRequestEvent, r, s : Node |
+    some req : AppendEntriesRequest, resp : AppendEntriesResponse |
+      req.source = s and handleAppendEntriesRequest[r, req, resp]
+  }
+}
+
 fun stutter_happens : set Event {
   { e : StutterEvent | stutter }
 }
@@ -112,5 +136,6 @@ fun events : set Event {
   become_leader_happens.Node +
   client_append_happens.Node +
   send_append_entries_request_happens.Node.Node +
+  handle_append_entries_request_happens.Node.Node +
   stutter_happens
 }
