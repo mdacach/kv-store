@@ -1,5 +1,5 @@
 module scenarios
-open raft
+open visualization
 
 run voteExchangeTrace {
   #Node = 5

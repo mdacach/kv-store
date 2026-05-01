@@ -1,5 +1,5 @@
 module safety
-open raft
+open visualization
 open util/ordering[Index] as indexOrd
 
 // Safety property: every node should always be in exactly one Raft role.

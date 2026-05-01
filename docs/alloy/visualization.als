@@ -9,6 +9,8 @@ enum Event {
   SendRequestVoteRequestEvent,
   HandleRequestVoteRequestEvent,
   HandleRequestVoteResponseEvent,
+  BecomeLeaderEvent,
+  ClientAppendEvent,
   StutterEvent
 }
 
@@ -72,6 +74,16 @@ fun handle_request_vote_response_happens : Event -> Node -> Node {
   }
 }
 
+fun become_leader_happens : Event -> Node {
+  { e : BecomeLeaderEvent, n : Node | becomeLeader[n] }
+}
+
+fun client_append_happens : Event -> Node {
+  { e : ClientAppendEvent, n : Node |
+    some entry : LogEntry | clientAppend[n, entry]
+  }
+}
+
 fun stutter_happens : set Event {
   { e : StutterEvent | stutter }
 }
@@ -82,5 +94,7 @@ fun events : set Event {
   send_request_vote_request_happens.Node.Node +
   handle_request_vote_request_happens.Node.Node +
   handle_request_vote_response_happens.Node.Node +
+  become_leader_happens.Node +
+  client_append_happens.Node +
   stutter_happens
 }
