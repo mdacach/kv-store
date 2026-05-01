@@ -195,6 +195,45 @@ pred prevLogMatches[receiver: Node, request: AppendEntriesRequest] {
   )
 }
 
+pred unchangedRoles {
+  Follower' = Follower
+  Candidate' = Candidate
+  Leader' = Leader
+}
+
+pred unchangedTerms {
+  currentTerm' = currentTerm
+}
+
+pred unchangedVoting {
+  votedFor' = votedFor
+  votesGranted' = votesGranted
+  votesRequested' = votesRequested
+}
+
+pred unchangedNetwork {
+  InFlight' = InFlight
+}
+
+pred unchangedLog {
+  log' = log
+}
+
+pred unchangedLeaderBookkeeping {
+  nextIndex' = nextIndex
+  matchIndex' = matchIndex
+}
+
+pred clearInactiveCandidateBookkeeping {
+  votesGranted' = votesGranted - ((Candidate - Candidate') -> Node)
+  votesRequested' = votesRequested - ((Candidate - Candidate') -> Node)
+}
+
+pred clearInactiveLeaderBookkeeping {
+  nextIndex' = nextIndex - ((Leader - Leader') -> Node -> Index)
+  matchIndex' = matchIndex - ((Leader - Leader') -> Node -> Index)
+}
+
 // Initial state for the leader-election model.
 pred init {
   // All nodes begin as followers.
@@ -250,10 +289,9 @@ pred timeout[n: Node] {
   Leader' = Leader
   // Timeouts do not directly change the network. Vote requests will come
   // as part of another transition.
-  InFlight' = InFlight
-  log' = log
-  nextIndex' = nextIndex
-  matchIndex' = matchIndex
+  unchangedNetwork
+  unchangedLog
+  unchangedLeaderBookkeeping
 }
 
 // A candidate sends a RequestVoteRequest to one peer.
@@ -347,10 +385,8 @@ pred handleRequestVoteRequest[receiver: Node, request: RequestVoteRequest, respo
   ) or (
     // Unchanged state.
     not termGt[request.messageTerm, receiver.currentTerm]
-    and Follower' = Follower
-    and Candidate' = Candidate
-    and Leader' = Leader
-    and currentTerm' = currentTerm
+    and unchangedRoles
+    and unchangedTerms
     and response.messageTerm = receiver.currentTerm
   )
 
@@ -373,11 +409,9 @@ pred handleRequestVoteRequest[receiver: Node, request: RequestVoteRequest, respo
 
   // If the receiver stepped down from candidate state, its candidate-only
   // election bookkeeping disappears with that role.
-  votesGranted' = votesGranted - ((Candidate - Candidate') -> Node)
-  votesRequested' = votesRequested - ((Candidate - Candidate') -> Node)
-  log' = log
-  nextIndex' = nextIndex - ((Leader - Leader') -> Node -> Index)
-  matchIndex' = matchIndex - ((Leader - Leader') -> Node -> Index)
+  clearInactiveCandidateBookkeeping
+  unchangedLog
+  clearInactiveLeaderBookkeeping
 }
 
 // A candidate receives a vote response for its current term.
@@ -406,14 +440,11 @@ pred handleRequestVoteResponse[candidate: Node, response: RequestVoteResponse] {
   InFlight' = InFlight - response
 
   // Unchanged state.
-  Follower' = Follower
-  Candidate' = Candidate
-  Leader' = Leader
-  currentTerm' = currentTerm
+  unchangedRoles
+  unchangedTerms
   votedFor' = votedFor
-  log' = log
-  nextIndex' = nextIndex
-  matchIndex' = matchIndex
+  unchangedLog
+  unchangedLeaderBookkeeping
 }
 
 // A candidate with a quorum of granted votes becomes leader.
@@ -427,12 +458,12 @@ pred becomeLeader[candidate: Node] {
 
   // Unchanged state.
   Follower' = Follower
-  currentTerm' = currentTerm
+  unchangedTerms
   votedFor' = votedFor
   votesGranted' = votesGranted - (candidate -> Node)
   votesRequested' = votesRequested - (candidate -> Node)
-  InFlight' = InFlight
-  log' = log
+  unchangedNetwork
+  unchangedLog
   nextIndex' = nextIndex + (candidate -> Node -> firstFreeLogIndex[candidate])
   matchIndex' = matchIndex
 }
@@ -451,16 +482,11 @@ pred clientAppend[leader: Node, entry: LogEntry] {
     log' = log + (leader -> nextLogIndex -> entry)
 
     // Unchanged state.
-    Follower' = Follower
-    Candidate' = Candidate
-    Leader' = Leader
-    currentTerm' = currentTerm
-    votedFor' = votedFor
-    votesGranted' = votesGranted
-    votesRequested' = votesRequested
-    InFlight' = InFlight
-    nextIndex' = nextIndex
-    matchIndex' = matchIndex
+    unchangedRoles
+    unchangedTerms
+    unchangedVoting
+    unchangedNetwork
+    unchangedLeaderBookkeeping
   }
 }
 
@@ -493,16 +519,11 @@ pred sendAppendEntriesRequest[leader, other: Node, request: AppendEntriesRequest
   InFlight' = InFlight + request
 
   // Unchanged state.
-  Follower' = Follower
-  Candidate' = Candidate
-  Leader' = Leader
-  currentTerm' = currentTerm
-  votedFor' = votedFor
-  votesGranted' = votesGranted
-  votesResponded' = votesResponded
-  log' = log
-  nextIndex' = nextIndex
-  matchIndex' = matchIndex
+  unchangedRoles
+  unchangedTerms
+  unchangedVoting
+  unchangedLog
+  unchangedLeaderBookkeeping
 }
 
 // A higher-term AppendEntries request has the same term effect as any other
@@ -535,10 +556,8 @@ pred appendEntriesRoleTermUnchanged[receiver: Node, request: AppendEntriesReques
   not termGt[request.messageTerm, receiver.currentTerm]
   (request.messageTerm != receiver.currentTerm or receiver in Follower)
 
-  Follower' = Follower
-  Candidate' = Candidate
-  Leader' = Leader
-  currentTerm' = currentTerm
+  unchangedRoles
+  unchangedTerms
   response.messageTerm = receiver.currentTerm
 }
 
@@ -558,7 +577,7 @@ pred rejectAppendEntriesLog[receiver: Node, request: AppendEntriesRequest, respo
 
   response.appendSuccess = False
   no response.responseMatchIndex
-  log' = log
+  unchangedLog
 }
 
 // Accepts an empty AppendEntries request. This is a heartbeat, or a request that
@@ -567,7 +586,7 @@ pred acceptAppendEntriesHeartbeat[request: AppendEntriesRequest, response: Appen
   no request.appendEntryIndex
   no request.appendEntry
   response.responseMatchIndex = request.prevLogIndex
-  log' = log
+  unchangedLog
 }
 
 // Accepts an AppendEntries request whose entry already exists at the receiver
@@ -578,7 +597,7 @@ pred acceptAppendEntriesExistingEntry[receiver: Node, request: AppendEntriesRequ
   logEntry[receiver, request.appendEntryIndex].term = request.appendEntry.term
 
   response.responseMatchIndex = request.appendEntryIndex
-  log' = log
+  unchangedLog
 }
 
 // Repairs a conflicting receiver log entry by deleting the conflicting suffix
@@ -650,10 +669,8 @@ pred handleAppendEntriesRequest[receiver: Node, request: AppendEntriesRequest, r
   // If the receiver stepped down from candidate or leader state, its
   // role-specific bookkeeping disappears with that role.
   votedFor' = votedFor
-  votesGranted' = votesGranted - ((Candidate - Candidate') -> Node)
-  votesResponded' = votesResponded - ((Candidate - Candidate') -> Node)
-  nextIndex' = nextIndex - ((Leader - Leader') -> Node -> Index)
-  matchIndex' = matchIndex - ((Leader - Leader') -> Node -> Index)
+  clearInactiveCandidateBookkeeping
+  clearInactiveLeaderBookkeeping
 }
 
 // Election-related protocol actions.
@@ -688,17 +705,12 @@ pred protocolActs {
 // A no-op transition to allow for lasso traces.
 pred stutter {
   // No state changes.
-  Follower' = Follower
-  Candidate' = Candidate
-  Leader' = Leader
-  currentTerm' = currentTerm
-  votedFor' = votedFor
-  votesGranted' = votesGranted
-  votesRequested' = votesRequested
-  InFlight' = InFlight
-  log' = log
-  nextIndex' = nextIndex
-  matchIndex' = matchIndex
+  unchangedRoles
+  unchangedTerms
+  unchangedVoting
+  unchangedNetwork
+  unchangedLog
+  unchangedLeaderBookkeeping
 }
 
 // Temporal behavior for the current scaffold.
