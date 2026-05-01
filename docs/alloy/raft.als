@@ -656,6 +656,35 @@ pred handleAppendEntriesRequest[receiver: Node, request: AppendEntriesRequest, r
   matchIndex' = matchIndex - ((Leader - Leader') -> Node -> Index)
 }
 
+// Election-related protocol actions.
+pred electionActs {
+  (some n: Node | timeout[n])
+  or (some candidate, other: Node, request: RequestVoteRequest |
+    sendRequestVoteRequest[candidate, other, request])
+  or (some receiver: Node, request: RequestVoteRequest, response: RequestVoteResponse |
+    handleRequestVoteRequest[receiver, request, response])
+  or (some candidate: Node, response: RequestVoteResponse |
+    handleRequestVoteResponse[candidate, response])
+  or (some candidate: Node | becomeLeader[candidate])
+}
+
+// Client-facing protocol actions.
+pred clientActs {
+  some leader: Node, entry: LogEntry | clientAppend[leader, entry]
+}
+
+// Log-replication protocol actions.
+pred replicationActs {
+  (some leader, other: Node, request: AppendEntriesRequest |
+    sendAppendEntriesRequest[leader, other, request])
+  or (some receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse |
+    handleAppendEntriesRequest[receiver, request, response])
+}
+
+pred protocolActs {
+  electionActs or clientActs or replicationActs
+}
+
 // A no-op transition to allow for lasso traces.
 pred stutter {
   // No state changes.
@@ -675,20 +704,5 @@ pred stutter {
 // Temporal behavior for the current scaffold.
 fact traces {
   init
-  always (
-    stutter
-    or some n: Node | timeout[n]
-    or some candidate, other: Node, request: RequestVoteRequest |
-      sendRequestVoteRequest[candidate, other, request]
-    or some receiver: Node, request: RequestVoteRequest, response: RequestVoteResponse |
-      handleRequestVoteRequest[receiver, request, response]
-    or some candidate: Node, response: RequestVoteResponse |
-      handleRequestVoteResponse[candidate, response]
-    or some candidate: Node | becomeLeader[candidate]
-    or some leader: Node, entry: LogEntry | clientAppend[leader, entry]
-    or some leader, other: Node, request: AppendEntriesRequest |
-      sendAppendEntriesRequest[leader, other, request]
-    or some receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse |
-      handleAppendEntriesRequest[receiver, request, response]
-  )
+  always (protocolActs or stutter)
 }
