@@ -57,6 +57,35 @@ sig RequestVoteResponse extends Message {
   voteGranted: one Bool
 }
 
+// A leader sends AppendEntries to one follower. This message is used both for
+// heartbeats (to maintain active leadership) and for log replication (to append
+// new entries to a follower's log).
+sig AppendEntriesRequest extends Message {
+  // Index and term of the entry immediately before the entries carried by this
+  // request. Followers use this pair to decide whether their log matches the
+  // leader at the splice point. Both are none when the request starts at the
+  // beginning of the log.
+  prevLogIndex: lone Index,
+  prevLogTerm: lone Term,
+  // Index and entry being replicated. Both are none for an empty heartbeat.
+  // This model sends at most one entry per request.
+  appendEntryIndex: lone Index,
+  appendEntry: lone LogEntry
+}
+
+// A follower replies to AppendEntries with whether the request matched its log
+// and, on success, the highest index made known to match the leader.
+sig AppendEntriesResponse extends Message {
+  appendSuccess: one Bool,
+  // Highest follower log index that matches the leader after processing the
+  // request. For a successful request with an appended entry, this is the
+  // request's appendEntryIndex. For a successful empty heartbeat, this is the
+  // request's prevLogIndex. For an empty heartbeat at the beginning of the log,
+  // this is none. Later response-handling transitions use it to update the
+  // leader's matchIndex for the follower.
+  responseMatchIndex: lone Index
+}
+
 // Simple boolean carrier for response payloads.
 abstract sig Bool {}
 one sig True, False extends Bool {}
@@ -421,6 +450,47 @@ pred clientAppend[leader: Node, entry: LogEntry] {
   }
 }
 
+// A leader sends AppendEntries to one peer. The leader uses nextIndex[other] to
+// describe the follower's expected next position:
+//
+// - prevLogIndex/prevLogTerm identify the entry just before that position;
+// - appendEntryIndex/appendEntry carry the next leader entry at that position,
+//   if the leader has one in the bounded log;
+// - an empty appendEntry is a heartbeat or an out-of-bounds replication attempt.
+//
+// This transition only sends the request. It does not update nextIndex or
+// matchIndex; those change later when the leader handles the follower's
+// AppendEntriesResponse.
+pred sendAppendEntriesRequest[leader, other: Node, request: AppendEntriesRequest] {
+  leader in Leader
+  other != leader
+  some leader.nextIndex[other]
+  fresh[request]
+
+  request.source = leader
+  request.dest = other
+  request.messageTerm = leader.currentTerm
+  request.prevLogIndex = leader.nextIndex[other].(indexOrd/prev)
+  request.prevLogTerm = request.prevLogIndex.(leader.log).term
+  request.appendEntryIndex = leader.nextIndex[other] & logIndexes[leader]
+  request.appendEntry = request.appendEntryIndex.(leader.log)
+
+  // Changed state.
+  InFlight' = InFlight + request
+
+  // Unchanged state.
+  Follower' = Follower
+  Candidate' = Candidate
+  Leader' = Leader
+  currentTerm' = currentTerm
+  votedFor' = votedFor
+  votesGranted' = votesGranted
+  votesResponded' = votesResponded
+  log' = log
+  nextIndex' = nextIndex
+  matchIndex' = matchIndex
+}
+
 // A no-op transition to allow for lasso traces.
 pred stutter {
   // No state changes.
@@ -451,5 +521,7 @@ fact traces {
       handleRequestVoteResponse[candidate, response]
     or some candidate: Node | becomeLeader[candidate]
     or some leader: Node, entry: LogEntry | clientAppend[leader, entry]
+    or some leader, other: Node, request: AppendEntriesRequest |
+      sendAppendEntriesRequest[leader, other, request]
   )
 }

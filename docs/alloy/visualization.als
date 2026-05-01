@@ -11,6 +11,7 @@ enum Event {
   HandleRequestVoteResponseEvent,
   BecomeLeaderEvent,
   ClientAppendEvent,
+  SendAppendEntriesRequestEvent,
   StutterEvent
 }
 
@@ -41,6 +42,14 @@ fun inFlightDeniedResponseEdges : Node -> Node {
   { s, d : Node |
     some resp : RequestVoteResponse & InFlight |
       resp.source = s and resp.dest = d and resp.voteGranted = False
+  }
+}
+
+// Direct network edges for in-flight AppendEntries requests.
+fun inFlightAppendEntriesRequestEdges : Node -> Node {
+  { s, d : Node |
+    some req : AppendEntriesRequest & InFlight |
+      req.source = s and req.dest = d
   }
 }
 
@@ -84,6 +93,12 @@ fun client_append_happens : Event -> Node {
   }
 }
 
+fun send_append_entries_request_happens : Event -> Node -> Node {
+  { e : SendAppendEntriesRequestEvent, l, o : Node |
+    some req : AppendEntriesRequest | sendAppendEntriesRequest[l, o, req]
+  }
+}
+
 fun stutter_happens : set Event {
   { e : StutterEvent | stutter }
 }
@@ -96,5 +111,6 @@ fun events : set Event {
   handle_request_vote_response_happens.Node.Node +
   become_leader_happens.Node +
   client_append_happens.Node +
+  send_append_entries_request_happens.Node.Node +
   stutter_happens
 }
