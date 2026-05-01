@@ -13,6 +13,7 @@ enum Event {
   ClientAppendEvent,
   SendAppendEntriesRequestEvent,
   HandleAppendEntriesRequestEvent,
+  HandleAppendEntriesResponseEvent,
   StutterEvent
 }
 
@@ -123,6 +124,13 @@ fun handle_append_entries_request_happens : Event -> Node -> Node {
   }
 }
 
+fun handle_append_entries_response_happens : Event -> Node -> Node {
+  { e : HandleAppendEntriesResponseEvent, r, s : Node |
+    some resp : AppendEntriesResponse |
+      resp.source = s and handleAppendEntriesResponse[r, resp]
+  }
+}
+
 fun stutter_happens : set Event {
   { e : StutterEvent | stutter }
 }
@@ -137,5 +145,6 @@ fun events : set Event {
   client_append_happens.Node +
   send_append_entries_request_happens.Node.Node +
   handle_append_entries_request_happens.Node.Node +
+  handle_append_entries_response_happens.Node.Node +
   stutter_happens
 }

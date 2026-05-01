@@ -165,6 +165,17 @@ fun indexesFrom[i: Index] : set Index {
   i + i.^(indexOrd/next)
 }
 
+fun indexAfter[i: lone Index] : lone Index {
+  { next: Index |
+    (no i and next = indexOrd/first)
+    or (some i and next = i.(indexOrd/next))
+  }
+}
+
+fun previousIndexOrFirst[i: Index] : one Index {
+  i.(indexOrd/prev) + (i & indexOrd/first)
+}
+
 // Raft's log freshness rule for RequestVote. A candidate is at least as
 // up-to-date as the receiver when its last log term is newer, or when terms are
 // equal and its last log index is at least as large.
@@ -720,6 +731,86 @@ pred handleAppendEntriesRequest[receiver: Node, request: AppendEntriesRequest, r
   or appendAppendEntriesNewEntryRequest[receiver, request, response]
 }
 
+pred appendEntriesResponseGuard[receiver: Node, response: AppendEntriesResponse] {
+  response in InFlight
+  response.dest = receiver
+}
+
+pred finishAppendEntriesResponse[response: AppendEntriesResponse] {
+  InFlight' = InFlight - response
+  unchangedLog
+}
+
+pred higherTermAppendEntriesResponseStepDown[receiver: Node, response: AppendEntriesResponse] {
+  appendEntriesResponseGuard[receiver, response]
+  higherTermStepDown[receiver, response]
+
+  unchangedVoting
+  clearInactiveLeaderBookkeeping
+  finishAppendEntriesResponse[response]
+}
+
+pred dropAppendEntriesResponse[receiver: Node, response: AppendEntriesResponse] {
+  appendEntriesResponseGuard[receiver, response]
+  not termGt[response.messageTerm, receiver.currentTerm]
+  (receiver not in Leader or response.messageTerm != receiver.currentTerm)
+
+  unchangedRoles
+  unchangedTerms
+  unchangedVoting
+  unchangedLeaderBookkeeping
+  finishAppendEntriesResponse[response]
+}
+
+pred handleSuccessfulAppendEntriesResponse[leader: Node, response: AppendEntriesResponse] {
+  appendEntriesResponseGuard[leader, response]
+  leader in Leader
+  response.messageTerm = leader.currentTerm
+  response.appendSuccess = True
+  no response.responseMatchIndex or response.responseMatchIndex in logIndexes[leader]
+
+  unchangedRoles
+  unchangedTerms
+  unchangedVoting
+  nextIndex' =
+    (nextIndex - (leader -> response.source -> Index))
+    + (leader -> response.source -> indexAfter[response.responseMatchIndex])
+  (
+    no response.responseMatchIndex
+    and matchIndex' = matchIndex
+  ) or (
+    some response.responseMatchIndex
+    and matchIndex' =
+      (matchIndex - (leader -> response.source -> Index))
+      + (leader -> response.source -> response.responseMatchIndex)
+  )
+  finishAppendEntriesResponse[response]
+}
+
+pred handleFailedAppendEntriesResponse[leader: Node, response: AppendEntriesResponse] {
+  appendEntriesResponseGuard[leader, response]
+  leader in Leader
+  response.messageTerm = leader.currentTerm
+  response.appendSuccess = False
+  some leader.nextIndex[response.source]
+
+  unchangedRoles
+  unchangedTerms
+  unchangedVoting
+  nextIndex' =
+    (nextIndex - (leader -> response.source -> Index))
+    + (leader -> response.source -> previousIndexOrFirst[leader.nextIndex[response.source]])
+  matchIndex' = matchIndex
+  finishAppendEntriesResponse[response]
+}
+
+pred handleAppendEntriesResponse[receiver: Node, response: AppendEntriesResponse] {
+  higherTermAppendEntriesResponseStepDown[receiver, response]
+  or dropAppendEntriesResponse[receiver, response]
+  or handleSuccessfulAppendEntriesResponse[receiver, response]
+  or handleFailedAppendEntriesResponse[receiver, response]
+}
+
 // Election-related protocol actions.
 pred electionActs {
   (some n: Node | timeout[n])
@@ -743,6 +834,8 @@ pred replicationActs {
     sendAppendEntriesRequest[leader, other, request])
   or (some receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse |
     handleAppendEntriesRequest[receiver, request, response])
+  or (some receiver: Node, response: AppendEntriesResponse |
+    handleAppendEntriesResponse[receiver, response])
 }
 
 pred protocolActs {

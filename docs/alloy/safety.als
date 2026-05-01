@@ -96,6 +96,24 @@ assert LogsAreContiguous {
     i.*(indexOrd/prev) in logIndexes[n]
 }
 
+// Safety: a successful AppendEntries response records the follower's matching
+// index when the response carries one.
+assert SuccessfulAppendEntriesResponseUpdatesMatchIndex {
+  always all leader: Node, response: AppendEntriesResponse |
+    (handleSuccessfulAppendEntriesResponse[leader, response]
+      and some response.responseMatchIndex) implies
+        leader.matchIndex'[response.source] = response.responseMatchIndex
+}
+
+// Safety: a failed same-term AppendEntries response backs off nextIndex by one
+// bounded log index, stopping at the first index.
+assert FailedAppendEntriesResponseBacksOffNextIndex {
+  always all leader: Node, response: AppendEntriesResponse |
+    handleFailedAppendEntriesResponse[leader, response] implies
+        leader.nextIndex'[response.source] =
+          previousIndexOrFirst[leader.nextIndex[response.source]]
+}
+
 check RolePartition for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value
 check LeadersRequireMajority for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value
 check LeadersKeepTheirElectionTerm for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value
@@ -109,3 +127,5 @@ check LeaderAppendOnly for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Val
 check SuccessfulAppendEntriesRequiresPrevLogMatch for 5 Node, 6 Term, 5 Message, 4 Index, 4 LogEntry, 2 Value
 check GrantedVotesRequireUpToDateLog for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value
 check LogsAreContiguous for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value
+check SuccessfulAppendEntriesResponseUpdatesMatchIndex for 5 Node, 6 Term, 5 Message, 4 Index, 4 LogEntry, 2 Value
+check FailedAppendEntriesResponseBacksOffNextIndex for 5 Node, 6 Term, 5 Message, 4 Index, 4 LogEntry, 2 Value
