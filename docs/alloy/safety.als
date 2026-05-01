@@ -29,8 +29,8 @@ assert LeadersStepDownBeforeTermChange {
     (n in Leader and n.currentTerm' != n.currentTerm) implies n not in Leader'
 }
 
-// Safety: handling a higher-term vote request forces the receiver out of
-// candidate/leader state and back to follower.
+// Safety: handling a higher-term vote request uses the generic step-down path
+// and forces the receiver out of candidate/leader state and back to follower.
 assert HigherTermRequestForcesStepDown {
   always all receiver: Node, request: RequestVoteRequest, response: RequestVoteResponse |
     (handleRequestVoteRequest[receiver, request, response]

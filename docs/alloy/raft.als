@@ -274,17 +274,15 @@ pred sendRequestVoteRequest[candidate, other: Node, request: RequestVoteRequest]
   matchIndex' = matchIndex
 }
 
-// A higher-term RequestVoteRequest forces the receiver to step down and adopt
-// the newer term before the vote is evaluated.
-pred higherTermRequestStepDown[receiver: Node, request: RequestVoteRequest, response: RequestVoteResponse] {
-  termGt[request.messageTerm, receiver.currentTerm]
+// A higher-term RPC forces the receiver to step down and adopt the newer term.
+pred higherTermStepDown[receiver: Node, message: Message] {
+  termGt[message.messageTerm, receiver.currentTerm]
 
   Follower' = Follower + receiver
   Candidate' = Candidate - receiver
   Leader' = Leader - receiver
   currentTerm' =
-    (currentTerm - (receiver -> Term)) + (receiver -> request.messageTerm)
-  response.messageTerm = request.messageTerm
+    (currentTerm - (receiver -> Term)) + (receiver -> message.messageTerm)
 }
 
 // A vote request is granted when:
@@ -329,7 +327,8 @@ pred handleRequestVoteRequest[receiver: Node, request: RequestVoteRequest, respo
   // newer term before considering the vote. Otherwise its role and term stay as-is.
   (
     // Changed state.
-    higherTermRequestStepDown[receiver, request, response]
+    higherTermStepDown[receiver, request]
+    and response.messageTerm = request.messageTerm
   ) or (
     // Unchanged state.
     not termGt[request.messageTerm, receiver.currentTerm]
