@@ -14,6 +14,7 @@ enum Event {
   SendAppendEntriesRequestEvent,
   HandleAppendEntriesRequestEvent,
   HandleAppendEntriesResponseEvent,
+  AdvanceCommitIndexEvent,
   StutterEvent
 }
 
@@ -131,6 +132,12 @@ fun handle_append_entries_response_happens : Event -> Node -> Node {
   }
 }
 
+fun advance_commit_index_happens : Event -> Node -> Index {
+  { e : AdvanceCommitIndexEvent, l : Node, i : Index |
+    advanceCommitIndex[l, i]
+  }
+}
+
 fun stutter_happens : set Event {
   { e : StutterEvent | stutter }
 }
@@ -146,5 +153,6 @@ fun events : set Event {
   send_append_entries_request_happens.Node.Node +
   handle_append_entries_request_happens.Node.Node +
   handle_append_entries_response_happens.Node.Node +
+  advance_commit_index_happens.Node.Index +
   stutter_happens
 }
