@@ -115,6 +115,12 @@ pred fresh[m: Message] {
   m not in InFlight
 }
 
+pred send[m: Message] { InFlight' = InFlight + m }
+
+pred discard[m: Message] { InFlight' = InFlight - m }
+
+pred reply[request, response: Message] { InFlight' = (InFlight - request) + response }
+
 // Helper predicates for comparing finite ordered terms.
 pred termGt[t1, t2: Term] {
   t1 in t2.^(termOrd/next)
@@ -322,7 +328,7 @@ pred sendRequestVoteRequest[candidate, other: Node, request: RequestVoteRequest]
 
   // Changed state.
   // The new message becomes in-flight.
-  InFlight' = InFlight + request
+  send[request]
   votesRequested' =
     (votesRequested - (candidate -> Node)) + (candidate -> (candidate.votesRequested + other))
 
@@ -416,7 +422,7 @@ pred handleRequestVoteRequest[receiver: Node, request: RequestVoteRequest, respo
 
   // Changed state.
   // Handling a request consumes the request message and creates the response.
-  InFlight' = (InFlight - request) + response
+  reply[request, response]
 
   // If the receiver stepped down from candidate state, its candidate-only
   // election bookkeeping disappears with that role.
@@ -448,7 +454,7 @@ pred handleRequestVoteResponse[candidate: Node, response: RequestVoteResponse] {
     (votesRequested - (candidate -> Node)) + (candidate -> (candidate.votesRequested + response.source))
 
   // Processing the response consumes it from the network.
-  InFlight' = InFlight - response
+  discard[response]
 
   // Unchanged state.
   unchangedRoles
@@ -527,7 +533,7 @@ pred sendAppendEntriesRequest[leader, other: Node, request: AppendEntriesRequest
   request.appendEntry = request.appendEntryIndex.(leader.log)
 
   // Changed state.
-  InFlight' = InFlight + request
+  send[request]
 
   // Unchanged state.
   unchangedRoles
@@ -637,7 +643,7 @@ pred appendEntriesRequestGuard[receiver: Node, request: AppendEntriesRequest, re
 }
 
 pred finishAppendEntriesRequest[request: AppendEntriesRequest, response: AppendEntriesResponse] {
-  InFlight' = (InFlight - request) + response
+  reply[request, response]
 
   // If the receiver stepped down from candidate or leader state, its
   // role-specific bookkeeping disappears with that role.
@@ -737,7 +743,7 @@ pred appendEntriesResponseGuard[receiver: Node, response: AppendEntriesResponse]
 }
 
 pred finishAppendEntriesResponse[response: AppendEntriesResponse] {
-  InFlight' = InFlight - response
+  discard[response]
   unchangedLog
 }
 
