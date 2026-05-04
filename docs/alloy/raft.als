@@ -207,14 +207,7 @@ fun cappedLeaderCommit[leader: Node, request: AppendEntriesRequest] : lone Index
   { i: Index |
     some leader.commitIndex
     and some appendEntriesCoveredIndex[request]
-    and
-    (
-      (indexGte[appendEntriesCoveredIndex[request], leader.commitIndex]
-       and i = leader.commitIndex)
-      or
-      (indexGt[leader.commitIndex, appendEntriesCoveredIndex[request]]
-       and i = appendEntriesCoveredIndex[request])
-    )
+    and i = indexOrd/min[leader.commitIndex + appendEntriesCoveredIndex[request]]
   }
 }
 
@@ -258,7 +251,7 @@ pred commitDoesNotMoveBackward[n: Node] {
 }
 
 // After accepting AppendEntries, a follower deterministically applies the
-// leader's capped commit index when doing so moves the follower forward. Stale
+// leader's capped commit index when doing so moves the follower forward. Older
 // lower commit payloads are ignored to preserve monotonic commit indexes.
 pred followerCommitFromLeader[receiver: Node, request: AppendEntriesRequest] {
   commitIndex' - (receiver -> Index) = commitIndex - (receiver -> Index)
