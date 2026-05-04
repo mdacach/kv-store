@@ -64,12 +64,58 @@ assert LeaderMatchIndexWithinLog {
     leader.matchIndex[peer] in logIndexes[leader]
 }
 
+// Safety: commit indexes always refer to entries in the node's log.
+assert CommitIndexWithinLog {
+  always all n: Node | n.commitIndex in logIndexes[n]
+}
+
+// Safety: commit indexes do not move backward.
+assert CommitIndexMonotonic {
+  always all n: Node | commitDoesNotMoveBackward[n]
+}
+
 // Safety: a node that remains leader in the same term never changes entries
 // already present in its own log.
 assert LeaderAppendOnly {
   always all n: Node, i: logIndexes[n] |
     (n in Leader and n in Leader' and n.currentTerm' = n.currentTerm) implies
       i.(n.log') = i.(n.log)
+}
+
+// Safety: if two logs contain entries with the same index and term, then the
+// entries at that index and all preceding entries are identical.
+assert LogMatching {
+  always all n1, n2: Node, i: Index |
+    (
+      some logEntry[n1, i]
+      and logEntry[n1, i].term = logEntry[n2, i].term
+    ) implies {
+      logEntry[n1, i] = logEntry[n2, i]
+      all earlier: Index |
+        i in earlier.^(indexOrd/next) implies
+          logEntry[n1, earlier] = logEntry[n2, earlier]
+    }
+}
+
+// Safety: leaders in later terms contain entries committed in earlier terms.
+assert LeaderCompleteness {
+  always all leader: Leader, n: Node, i: Index |
+    (
+      committedThrough[n, i]
+      and some logEntry[n, i]
+      and termGt[leader.currentTerm, logEntry[n, i].term]
+    ) implies
+      logEntry[leader, i] = logEntry[n, i]
+}
+
+// Safety: no two nodes can have different committed entries at the same index.
+assert CommittedEntryAgreement {
+  always all n1, n2: Node, i: Index |
+    (
+      committedThrough[n1, i]
+      and committedThrough[n2, i]
+    ) implies
+      logEntry[n1, i] = logEntry[n2, i]
 }
 
 // Safety: successful AppendEntries handling only succeeds when the previous-log
@@ -123,7 +169,12 @@ check OneVotePerNodePerTerm for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 
 check AtMostOneLeaderPerTerm for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value
 check VotesGrantedSubsetVotesRequested for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value
 check LeaderMatchIndexWithinLog for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value
+check CommitIndexWithinLog for 5 Node, 6 Term, 5 Message, 4 Index, 4 LogEntry, 2 Value
+check CommitIndexMonotonic for 5 Node, 6 Term, 5 Message, 4 Index, 4 LogEntry, 2 Value
 check LeaderAppendOnly for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value
+check LogMatching for 5 Node, 6 Term, 5 Message, 4 Index, 4 LogEntry, 2 Value
+check LeaderCompleteness for 5 Node, 6 Term, 5 Message, 4 Index, 4 LogEntry, 2 Value
+check CommittedEntryAgreement for 5 Node, 6 Term, 5 Message, 4 Index, 4 LogEntry, 2 Value
 check SuccessfulAppendEntriesRequiresPrevLogMatch for 5 Node, 6 Term, 5 Message, 4 Index, 4 LogEntry, 2 Value
 check GrantedVotesRequireUpToDateLog for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value
 check LogsAreContiguous for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value

@@ -9,7 +9,9 @@ sig Node {
   // Persistent voting history for each term.
   var votedFor: Term -> lone Node,
   // Persistent log entries keyed by bounded log index.
-  var log: Index -> lone LogEntry
+  var log: Index -> lone LogEntry,
+  // Highest log index known to be committed on this node.
+  var commitIndex: lone Index
 }
 
 // Terms are finite and ordered in the model, even though Raft terms are
@@ -70,7 +72,9 @@ sig AppendEntriesRequest extends Message {
   // Index and entry being replicated. Both are none for an empty heartbeat.
   // This model sends at most one entry per request.
   appendEntryIndex: lone Index,
-  appendEntry: lone LogEntry
+  appendEntry: lone LogEntry,
+  // Highest log index the leader knows to be committed.
+  leaderCommit: lone Index
 }
 
 // A follower replies to AppendEntries with whether the request matched its log
@@ -130,6 +134,10 @@ pred indexGte[i1, i2: Index] {
   i1 = i2 or i1 in i2.^(indexOrd/next)
 }
 
+pred indexGt[i1, i2: Index] {
+  i1 in i2.^(indexOrd/next)
+}
+
 // A set of votes is a quorum when it is a strict majority of the cluster.
 pred hasMajority[votes: set Node] {
   gt[#votes, div[#Node, 2]]
@@ -182,6 +190,34 @@ fun previousIndexOrFirst[i: Index] : one Index {
   i.(indexOrd/prev) + (i & indexOrd/first)
 }
 
+// Highest log index whose contents are covered by this AppendEntries request.
+// A request with an entry covers that entry; an empty heartbeat covers only its
+// previous-log index, if any.
+fun appendEntriesCoveredIndex[request: AppendEntriesRequest] : lone Index {
+  { i: Index |
+    (some request.appendEntryIndex and i = request.appendEntryIndex)
+    or (no request.appendEntryIndex and i = request.prevLogIndex)
+  }
+}
+
+// The commit index a leader may advertise in AppendEntries. This mirrors
+// Ongaro's TLA+ model: advertise the smaller of the leader's commit index and
+// the highest log index covered by this request.
+fun cappedLeaderCommit[leader: Node, request: AppendEntriesRequest] : lone Index {
+  { i: Index |
+    some leader.commitIndex
+    and some appendEntriesCoveredIndex[request]
+    and
+    (
+      (indexGte[appendEntriesCoveredIndex[request], leader.commitIndex]
+       and i = leader.commitIndex)
+      or
+      (indexGt[leader.commitIndex, appendEntriesCoveredIndex[request]]
+       and i = appendEntriesCoveredIndex[request])
+    )
+  }
+}
+
 // Raft's log freshness rule for RequestVote. A candidate is at least as
 // up-to-date as the receiver when its last log term is newer, or when terms are
 // equal and its last log index is at least as large.
@@ -212,6 +248,61 @@ pred prevLogMatches[receiver: Node, request: AppendEntriesRequest] {
   )
 }
 
+// Commit indexes are monotonic once present.
+pred commitDoesNotMoveBackward[n: Node] {
+  no n.commitIndex
+  or (
+    some n.commitIndex'
+    and indexGte[n.commitIndex', n.commitIndex]
+  )
+}
+
+// After accepting AppendEntries, a follower deterministically applies the
+// leader's capped commit index when doing so moves the follower forward. Stale
+// lower commit payloads are ignored to preserve monotonic commit indexes.
+pred followerCommitFromLeader[receiver: Node, request: AppendEntriesRequest] {
+  commitIndex' - (receiver -> Index) = commitIndex - (receiver -> Index)
+  (
+    no request.leaderCommit
+    and receiver.commitIndex' = receiver.commitIndex
+  ) or (
+    some request.leaderCommit
+    and request.leaderCommit in (receiver.log').LogEntry
+    and (
+      (
+        no receiver.commitIndex
+        and receiver.commitIndex' = request.leaderCommit
+      ) or (
+        some receiver.commitIndex
+        and (
+          (
+            indexGt[request.leaderCommit, receiver.commitIndex]
+            and receiver.commitIndex' = request.leaderCommit
+          ) or (
+            not indexGt[request.leaderCommit, receiver.commitIndex]
+            and receiver.commitIndex' = receiver.commitIndex
+          )
+        )
+      )
+    )
+  )
+  commitDoesNotMoveBackward[receiver]
+}
+
+pred quorumAgreesThrough[leader: Node, index: Index] {
+  hasMajority[
+    leader + { peer : Node |
+      some leader.matchIndex[peer]
+      and indexGte[leader.matchIndex[peer], index]
+    }
+  ]
+}
+
+pred committedThrough[n: Node, i: Index] {
+  some n.commitIndex
+  and indexGte[n.commitIndex, i]
+}
+
 pred unchangedRoles {
   Follower' = Follower
   Candidate' = Candidate
@@ -234,6 +325,10 @@ pred unchangedNetwork {
 
 pred unchangedLog {
   log' = log
+}
+
+pred unchangedCommitIndex {
+  commitIndex' = commitIndex
 }
 
 pred unchangedLeaderBookkeeping {
@@ -271,6 +366,7 @@ pred init {
 
   // Logs start empty.
   no log
+  no commitIndex
 
   // There are no leaders initially, so no leader-only replication bookkeeping.
   no nextIndex
@@ -308,6 +404,7 @@ pred timeout[n: Node] {
   // as part of another transition.
   unchangedNetwork
   unchangedLog
+  unchangedCommitIndex
   unchangedLeaderBookkeeping
 }
 
@@ -333,15 +430,13 @@ pred sendRequestVoteRequest[candidate, other: Node, request: RequestVoteRequest]
     (votesRequested - (candidate -> Node)) + (candidate -> (candidate.votesRequested + other))
 
   // Unchanged state.
-  Follower' = Follower
-  Candidate' = Candidate
-  Leader' = Leader
-  currentTerm' = currentTerm
+  unchangedRoles
+  unchangedTerms
   votedFor' = votedFor
   votesGranted' = votesGranted
-  log' = log
-  nextIndex' = nextIndex
-  matchIndex' = matchIndex
+  unchangedLog
+  unchangedCommitIndex
+  unchangedLeaderBookkeeping
 }
 
 // A higher-term RPC forces the receiver to step down and adopt the newer term.
@@ -428,6 +523,7 @@ pred handleRequestVoteRequest[receiver: Node, request: RequestVoteRequest, respo
   // election bookkeeping disappears with that role.
   clearInactiveCandidateBookkeeping
   unchangedLog
+  unchangedCommitIndex
   clearInactiveLeaderBookkeeping
 }
 
@@ -461,6 +557,7 @@ pred handleRequestVoteResponse[candidate: Node, response: RequestVoteResponse] {
   unchangedTerms
   votedFor' = votedFor
   unchangedLog
+  unchangedCommitIndex
   unchangedLeaderBookkeeping
 }
 
@@ -481,6 +578,7 @@ pred becomeLeader[candidate: Node] {
   votesRequested' = votesRequested - (candidate -> Node)
   unchangedNetwork
   unchangedLog
+  unchangedCommitIndex
   nextIndex' = nextIndex + (candidate -> Node -> firstFreeLogIndex[candidate])
   matchIndex' = matchIndex
 }
@@ -503,6 +601,7 @@ pred clientAppend[leader: Node, entry: LogEntry] {
     unchangedTerms
     unchangedVoting
     unchangedNetwork
+    unchangedCommitIndex
     unchangedLeaderBookkeeping
   }
 }
@@ -531,6 +630,7 @@ pred sendAppendEntriesRequest[leader, other: Node, request: AppendEntriesRequest
   request.prevLogTerm = request.prevLogIndex.(leader.log).term
   request.appendEntryIndex = leader.nextIndex[other] & logIndexes[leader]
   request.appendEntry = request.appendEntryIndex.(leader.log)
+  request.leaderCommit = cappedLeaderCommit[leader, request]
 
   // Changed state.
   send[request]
@@ -540,6 +640,7 @@ pred sendAppendEntriesRequest[leader, other: Node, request: AppendEntriesRequest
   unchangedTerms
   unchangedVoting
   unchangedLog
+  unchangedCommitIndex
   unchangedLeaderBookkeeping
 }
 
@@ -661,6 +762,7 @@ pred rejectStaleAppendEntriesRequest[receiver: Node, request: AppendEntriesReque
   response.appendSuccess = False
   no response.responseMatchIndex
   unchangedLog
+  unchangedCommitIndex
   finishAppendEntriesRequest[request, response]
 }
 
@@ -674,6 +776,7 @@ pred rejectAppendEntriesPrevMismatch[receiver: Node, request: AppendEntriesReque
   response.appendSuccess = False
   no response.responseMatchIndex
   unchangedLog
+  unchangedCommitIndex
   finishAppendEntriesRequest[request, response]
 }
 
@@ -685,6 +788,7 @@ pred acceptAppendEntriesHeartbeatRequest[receiver: Node, request: AppendEntriesR
   prevLogMatches[receiver, request]
   response.appendSuccess = True
   acceptAppendEntriesHeartbeat[request, response]
+  followerCommitFromLeader[receiver, request]
 
   finishAppendEntriesRequest[request, response]
 }
@@ -697,6 +801,7 @@ pred acceptAppendEntriesExistingEntryRequest[receiver: Node, request: AppendEntr
   prevLogMatches[receiver, request]
   response.appendSuccess = True
   acceptAppendEntriesExistingEntry[receiver, request, response]
+  followerCommitFromLeader[receiver, request]
 
   finishAppendEntriesRequest[request, response]
 }
@@ -709,6 +814,7 @@ pred replaceAppendEntriesConflictRequest[receiver: Node, request: AppendEntriesR
   prevLogMatches[receiver, request]
   response.appendSuccess = True
   replaceAppendEntriesConflictingEntry[receiver, request, response]
+  followerCommitFromLeader[receiver, request]
 
   finishAppendEntriesRequest[request, response]
 }
@@ -721,6 +827,7 @@ pred appendAppendEntriesNewEntryRequest[receiver: Node, request: AppendEntriesRe
   prevLogMatches[receiver, request]
   response.appendSuccess = True
   appendAppendEntriesNewEntry[receiver, request, response]
+  followerCommitFromLeader[receiver, request]
 
   finishAppendEntriesRequest[request, response]
 }
@@ -745,6 +852,7 @@ pred appendEntriesResponseGuard[receiver: Node, response: AppendEntriesResponse]
 pred finishAppendEntriesResponse[response: AppendEntriesResponse] {
   discard[response]
   unchangedLog
+  unchangedCommitIndex
 }
 
 pred higherTermAppendEntriesResponseStepDown[receiver: Node, response: AppendEntriesResponse] {
@@ -817,6 +925,28 @@ pred handleAppendEntriesResponse[receiver: Node, response: AppendEntriesResponse
   or handleFailedAppendEntriesResponse[receiver, response]
 }
 
+// A leader advances its commit index once a quorum has replicated an entry from
+// the leader's current term.
+pred advanceCommitIndex[leader: Node, newCommitIndex: Index] {
+  leader in Leader
+  newCommitIndex in logIndexes[leader]
+  logEntry[leader, newCommitIndex].term = leader.currentTerm
+  quorumAgreesThrough[leader, newCommitIndex]
+  no leader.commitIndex or indexGt[newCommitIndex, leader.commitIndex]
+
+  // Changed state.
+  commitIndex' =
+    (commitIndex - (leader -> Index)) + (leader -> newCommitIndex)
+
+  // Unchanged state.
+  unchangedRoles
+  unchangedTerms
+  unchangedVoting
+  unchangedNetwork
+  unchangedLog
+  unchangedLeaderBookkeeping
+}
+
 pred receive[m: Message] {
   (some request: RequestVoteRequest, response: RequestVoteResponse |
     m = request and handleRequestVoteRequest[request.dest, request, response])
@@ -843,8 +973,10 @@ pred clientActs {
 
 // Log-replication protocol actions.
 pred replicationActs {
-  some leader, other: Node, request: AppendEntriesRequest |
-    sendAppendEntriesRequest[leader, other, request]
+  (some leader, other: Node, request: AppendEntriesRequest |
+    sendAppendEntriesRequest[leader, other, request])
+  or (some leader: Node, newCommitIndex: Index |
+    advanceCommitIndex[leader, newCommitIndex])
 }
 
 pred messageActs {
@@ -863,6 +995,7 @@ pred stutter {
   unchangedVoting
   unchangedNetwork
   unchangedLog
+  unchangedCommitIndex
   unchangedLeaderBookkeeping
 }
 

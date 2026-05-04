@@ -93,3 +93,9 @@ run appendEntriesHigherTermResponseTrace {
   eventually some receiver: Node, response: AppendEntriesResponse |
     higherTermAppendEntriesResponseStepDown[receiver, response]
 } for 3 Node, 5 Term, 6 Message, 3 Index, 3 LogEntry, 2 Value
+
+run committedEntryTrace {
+  #Node = 3
+  #Term >= 2
+  eventually some n: Node | some n.commitIndex
+} for 15 steps, 3 Node, 4 Term, 8 Message, 3 Index, 3 LogEntry, 2 Value
