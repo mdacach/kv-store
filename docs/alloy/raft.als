@@ -817,15 +817,22 @@ pred handleAppendEntriesResponse[receiver: Node, response: AppendEntriesResponse
   or handleFailedAppendEntriesResponse[receiver, response]
 }
 
+pred receive[m: Message] {
+  (some request: RequestVoteRequest, response: RequestVoteResponse |
+    m = request and handleRequestVoteRequest[request.dest, request, response])
+  or (some response: RequestVoteResponse |
+    m = response and handleRequestVoteResponse[response.dest, response])
+  or (some request: AppendEntriesRequest, response: AppendEntriesResponse |
+    m = request and handleAppendEntriesRequest[request.dest, request, response])
+  or (some response: AppendEntriesResponse |
+    m = response and handleAppendEntriesResponse[response.dest, response])
+}
+
 // Election-related protocol actions.
 pred electionActs {
   (some n: Node | timeout[n])
   or (some candidate, other: Node, request: RequestVoteRequest |
     sendRequestVoteRequest[candidate, other, request])
-  or (some receiver: Node, request: RequestVoteRequest, response: RequestVoteResponse |
-    handleRequestVoteRequest[receiver, request, response])
-  or (some candidate: Node, response: RequestVoteResponse |
-    handleRequestVoteResponse[candidate, response])
   or (some candidate: Node | becomeLeader[candidate])
 }
 
@@ -836,16 +843,16 @@ pred clientActs {
 
 // Log-replication protocol actions.
 pred replicationActs {
-  (some leader, other: Node, request: AppendEntriesRequest |
-    sendAppendEntriesRequest[leader, other, request])
-  or (some receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse |
-    handleAppendEntriesRequest[receiver, request, response])
-  or (some receiver: Node, response: AppendEntriesResponse |
-    handleAppendEntriesResponse[receiver, response])
+  some leader, other: Node, request: AppendEntriesRequest |
+    sendAppendEntriesRequest[leader, other, request]
+}
+
+pred messageActs {
+  some m: InFlight | receive[m]
 }
 
 pred protocolActs {
-  electionActs or clientActs or replicationActs
+  electionActs or clientActs or replicationActs or messageActs
 }
 
 // A no-op transition to allow for lasso traces.
