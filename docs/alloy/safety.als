@@ -118,6 +118,17 @@ assert CommittedEntryAgreement {
       logEntry[n1, i] = logEntry[n2, i]
 }
 
+// Safety: once a node considers an entry committed, that local log entry is
+// stable across future transitions.
+assert CommittedPrefixStable {
+  always all n: Node, i: Index |
+    (
+      committedThrough[n, i]
+      and some logEntry[n, i]
+    ) implies
+      logEntry[n, i] = i.(n.log')
+}
+
 // Safety: successful AppendEntries handling only succeeds when the previous-log
 // metadata matched the receiver log before the request was applied.
 assert SuccessfulAppendEntriesRequiresPrevLogMatch {
@@ -175,6 +186,7 @@ check LeaderAppendOnly for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Val
 check LogMatching for 5 Node, 6 Term, 5 Message, 4 Index, 4 LogEntry, 2 Value
 check LeaderCompleteness for 5 Node, 6 Term, 5 Message, 4 Index, 4 LogEntry, 2 Value
 check CommittedEntryAgreement for 5 Node, 6 Term, 5 Message, 4 Index, 4 LogEntry, 2 Value
+check CommittedPrefixStable for 5 Node, 6 Term, 5 Message, 4 Index, 4 LogEntry, 2 Value
 check SuccessfulAppendEntriesRequiresPrevLogMatch for 5 Node, 6 Term, 5 Message, 4 Index, 4 LogEntry, 2 Value
 check GrantedVotesRequireUpToDateLog for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value
 check LogsAreContiguous for 5 Node, 6 Term, 4 Message, 4 Index, 4 LogEntry, 2 Value
