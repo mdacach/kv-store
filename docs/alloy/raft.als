@@ -734,6 +734,13 @@ pred appendAppendEntriesNewEntry[receiver: Node, request: AppendEntriesRequest, 
   log' = log + (receiver -> request.appendEntryIndex -> request.appendEntry)
 }
 
+pred acceptMatchedAppendEntriesPayload[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
+  acceptAppendEntriesHeartbeat[request, response]
+  or acceptAppendEntriesExistingEntry[receiver, request, response]
+  or replaceAppendEntriesConflictingEntry[receiver, request, response]
+  or appendAppendEntriesNewEntry[receiver, request, response]
+}
+
 pred appendEntriesRequestGuard[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
   request in InFlight
   request.dest = receiver
@@ -780,53 +787,14 @@ pred rejectAppendEntriesPrevMismatch[receiver: Node, request: AppendEntriesReque
   finishAppendEntriesRequest[request, response]
 }
 
-pred acceptAppendEntriesHeartbeatRequest[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
+pred acceptMatchedAppendEntriesRequest[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
   appendEntriesRequestGuard[receiver, request, response]
 
   appendEntriesRoleTermEffect[receiver, request, response]
   request.messageTerm = receiver.currentTerm'
   prevLogMatches[receiver, request]
   response.appendSuccess = True
-  acceptAppendEntriesHeartbeat[request, response]
-  followerCommitFromLeader[receiver, request]
-
-  finishAppendEntriesRequest[request, response]
-}
-
-pred acceptAppendEntriesExistingEntryRequest[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
-  appendEntriesRequestGuard[receiver, request, response]
-
-  appendEntriesRoleTermEffect[receiver, request, response]
-  request.messageTerm = receiver.currentTerm'
-  prevLogMatches[receiver, request]
-  response.appendSuccess = True
-  acceptAppendEntriesExistingEntry[receiver, request, response]
-  followerCommitFromLeader[receiver, request]
-
-  finishAppendEntriesRequest[request, response]
-}
-
-pred replaceAppendEntriesConflictRequest[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
-  appendEntriesRequestGuard[receiver, request, response]
-
-  appendEntriesRoleTermEffect[receiver, request, response]
-  request.messageTerm = receiver.currentTerm'
-  prevLogMatches[receiver, request]
-  response.appendSuccess = True
-  replaceAppendEntriesConflictingEntry[receiver, request, response]
-  followerCommitFromLeader[receiver, request]
-
-  finishAppendEntriesRequest[request, response]
-}
-
-pred appendAppendEntriesNewEntryRequest[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
-  appendEntriesRequestGuard[receiver, request, response]
-
-  appendEntriesRoleTermEffect[receiver, request, response]
-  request.messageTerm = receiver.currentTerm'
-  prevLogMatches[receiver, request]
-  response.appendSuccess = True
-  appendAppendEntriesNewEntry[receiver, request, response]
+  acceptMatchedAppendEntriesPayload[receiver, request, response]
   followerCommitFromLeader[receiver, request]
 
   finishAppendEntriesRequest[request, response]
@@ -838,10 +806,7 @@ pred appendAppendEntriesNewEntryRequest[receiver: Node, request: AppendEntriesRe
 pred handleAppendEntriesRequest[receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse] {
   rejectStaleAppendEntriesRequest[receiver, request, response]
   or rejectAppendEntriesPrevMismatch[receiver, request, response]
-  or acceptAppendEntriesHeartbeatRequest[receiver, request, response]
-  or acceptAppendEntriesExistingEntryRequest[receiver, request, response]
-  or replaceAppendEntriesConflictRequest[receiver, request, response]
-  or appendAppendEntriesNewEntryRequest[receiver, request, response]
+  or acceptMatchedAppendEntriesRequest[receiver, request, response]
 }
 
 pred appendEntriesResponseGuard[receiver: Node, response: AppendEntriesResponse] {

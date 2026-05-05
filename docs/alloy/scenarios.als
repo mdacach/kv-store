@@ -72,39 +72,34 @@ run appendEntriesPrevMismatchRejectTrace {
     after after after after becomeLeader[oldLeader]
     after after after after after clientAppend[oldLeader, entry]
     after after after after after after sendAppendEntriesRequest[oldLeader, newLeader, replicateReq]
-    after after after after after after after appendAppendEntriesNewEntryRequest[newLeader, replicateReq, replicateResp]
+    after after after after after after after {
+      handleAppendEntriesRequest[newLeader, replicateReq, replicateResp]
+      replicateResp.appendSuccess = True
+      some replicateResp.responseMatchIndex
+    }
     after after after after after after after after timeout[newLeader]
     after after after after after after after after after sendRequestVoteRequest[newLeader, oldLeader, newVoteReq]
     after after after after after after after after after after handleRequestVoteRequest[oldLeader, newVoteReq, newVoteResp]
     after after after after after after after after after after after handleRequestVoteResponse[newLeader, newVoteResp]
     after after after after after after after after after after after after becomeLeader[newLeader]
     after after after after after after after after after after after after after sendAppendEntriesRequest[newLeader, emptyFollower, mismatchReq]
-    after after after after after after after after after after after after after after rejectAppendEntriesPrevMismatch[emptyFollower, mismatchReq, mismatchResp]
+    after after after after after after after after after after after after after after {
+      handleAppendEntriesRequest[emptyFollower, mismatchReq, mismatchResp]
+      mismatchResp.appendSuccess = False
+      not prevLogMatches[emptyFollower, mismatchReq]
+    }
   }
 } for 16 steps, 3 Node, 4 Term, 8 Message, 2 Index, 1 LogEntry, 1 Value
 
 run appendEntriesConflictRepairTrace {
-  some disj oldLeader, newLeader, voter: Node |
-  some oldReq, newReq: RequestVoteRequest |
-  some oldResp, newResp: RequestVoteResponse |
-  some appendReq: AppendEntriesRequest, appendResp: AppendEntriesResponse |
-  some oldEntry, newEntry: LogEntry | {
-    timeout[oldLeader]
-    after sendRequestVoteRequest[oldLeader, voter, oldReq]
-    after after handleRequestVoteRequest[voter, oldReq, oldResp]
-    after after after handleRequestVoteResponse[oldLeader, oldResp]
-    after after after after becomeLeader[oldLeader]
-    after after after after after clientAppend[oldLeader, oldEntry]
-    after after after after after after timeout[newLeader]
-    after after after after after after after timeout[newLeader]
-    after after after after after after after after sendRequestVoteRequest[newLeader, voter, newReq]
-    after after after after after after after after after handleRequestVoteRequest[voter, newReq, newResp]
-    after after after after after after after after after after handleRequestVoteResponse[newLeader, newResp]
-    after after after after after after after after after after after becomeLeader[newLeader]
-    after after after after after after after after after after after after clientAppend[newLeader, newEntry]
-    after after after after after after after after after after after after after sendAppendEntriesRequest[newLeader, oldLeader, appendReq]
-    after after after after after after after after after after after after after after replaceAppendEntriesConflictRequest[oldLeader, appendReq, appendResp]
-  }
+  #Node = 3
+  #Term >= 3
+  eventually some receiver: Node, request: AppendEntriesRequest, response: AppendEntriesResponse |
+    handleAppendEntriesRequest[receiver, request, response]
+    and response.appendSuccess = True
+    and some request.appendEntryIndex
+    and logEntry[receiver, request.appendEntryIndex].term != request.appendEntry.term
+    and request.appendEntryIndex.(receiver.log') = request.appendEntry
 } for 16 steps, 3 Node, 4 Term, 6 Message, 1 Index, 2 LogEntry, 2 Value
 
 run appendEntriesResponseSuccessTrace {
@@ -129,15 +124,28 @@ run appendEntriesResponseBackoffTrace {
     after after after after becomeLeader[oldLeader]
     after after after after after clientAppend[oldLeader, entry]
     after after after after after after sendAppendEntriesRequest[oldLeader, newLeader, replicateReq]
-    after after after after after after after appendAppendEntriesNewEntryRequest[newLeader, replicateReq, replicateResp]
+    after after after after after after after {
+      handleAppendEntriesRequest[newLeader, replicateReq, replicateResp]
+      replicateResp.appendSuccess = True
+      some replicateResp.responseMatchIndex
+    }
     after after after after after after after after timeout[newLeader]
     after after after after after after after after after sendRequestVoteRequest[newLeader, oldLeader, newVoteReq]
     after after after after after after after after after after handleRequestVoteRequest[oldLeader, newVoteReq, newVoteResp]
     after after after after after after after after after after after handleRequestVoteResponse[newLeader, newVoteResp]
     after after after after after after after after after after after after becomeLeader[newLeader]
     after after after after after after after after after after after after after sendAppendEntriesRequest[newLeader, emptyFollower, mismatchReq]
-    after after after after after after after after after after after after after after rejectAppendEntriesPrevMismatch[emptyFollower, mismatchReq, mismatchResp]
-    after after after after after after after after after after after after after after after handleFailedAppendEntriesResponse[newLeader, mismatchResp]
+    after after after after after after after after after after after after after after {
+      handleAppendEntriesRequest[emptyFollower, mismatchReq, mismatchResp]
+      mismatchResp.appendSuccess = False
+      not prevLogMatches[emptyFollower, mismatchReq]
+    }
+    after after after after after after after after after after after after after after after {
+      handleAppendEntriesResponse[newLeader, mismatchResp]
+      mismatchResp.appendSuccess = False
+      newLeader.nextIndex'[emptyFollower] =
+        previousIndexOrFirst[newLeader.nextIndex[emptyFollower]]
+    }
   }
 } for 17 steps, 3 Node, 4 Term, 8 Message, 2 Index, 1 LogEntry, 1 Value
 
