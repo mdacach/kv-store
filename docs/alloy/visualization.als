@@ -24,52 +24,41 @@ enum Event {
 // them as derived relations. They do not affect solving; they only make traces
 // easier to inspect.
 
+fun messageEdges[messages: set Message] : Node -> Node {
+  { s, d : Node |
+    some message : messages |
+      message.source = s and message.dest = d
+  }
+}
+
 // Direct network edges for in-flight vote requests.
 fun inFlightRequestEdges : Node -> Node {
-  { s, d : Node |
-    some req : RequestVoteRequest & InFlight |
-      req.source = s and req.dest = d
-  }
+  messageEdges[RequestVoteRequest & InFlight]
 }
 
 // Direct network edges for in-flight granted vote responses.
 fun inFlightGrantedResponseEdges : Node -> Node {
-  { s, d : Node |
-    some resp : RequestVoteResponse & InFlight |
-      resp.source = s and resp.dest = d and resp.voteGranted = True
-  }
+  messageEdges[{ resp : RequestVoteResponse & InFlight | resp.voteGranted = True }]
 }
 
 // Direct network edges for in-flight denied vote responses.
 fun inFlightDeniedResponseEdges : Node -> Node {
-  { s, d : Node |
-    some resp : RequestVoteResponse & InFlight |
-      resp.source = s and resp.dest = d and resp.voteGranted = False
-  }
+  messageEdges[{ resp : RequestVoteResponse & InFlight | resp.voteGranted = False }]
 }
 
 // Direct network edges for in-flight AppendEntries requests.
 fun inFlightAppendEntriesRequestEdges : Node -> Node {
-  { s, d : Node |
-    some req : AppendEntriesRequest & InFlight |
-      req.source = s and req.dest = d
-  }
+  messageEdges[AppendEntriesRequest & InFlight]
 }
 
 // Direct network edges for in-flight successful AppendEntries responses.
 fun inFlightAppendEntriesSuccessResponseEdges : Node -> Node {
-  { s, d : Node |
-    some resp : AppendEntriesResponse & InFlight |
-      resp.source = s and resp.dest = d and resp.appendSuccess = True
-  }
+  messageEdges[{ resp : AppendEntriesResponse & InFlight | resp.appendSuccess = True }]
 }
 
 // Direct network edges for in-flight failed AppendEntries responses.
 fun inFlightAppendEntriesFailureResponseEdges : Node -> Node {
-  { s, d : Node |
-    some resp : AppendEntriesResponse & InFlight |
-      resp.source = s and resp.dest = d and resp.appendSuccess = False
-  }
+  messageEdges[{ resp : AppendEntriesResponse & InFlight | resp.appendSuccess = False }]
 }
 
 // The current votes a candidate has accumulated.
@@ -153,6 +142,6 @@ fun events : set Event {
   send_append_entries_request_happens.Node.Node +
   handle_append_entries_request_happens.Node.Node +
   handle_append_entries_response_happens.Node.Node +
-  advance_commit_index_happens.Node.Index +
+  advance_commit_index_happens.Index.Node +
   stutter_happens
 }
